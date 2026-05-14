@@ -5,6 +5,7 @@
 
 import streamlit as st
 import time
+import json
 import mysql.connector
 from abc import ABC, abstractmethod
 import hashlib
@@ -21,6 +22,7 @@ db_config = {
 # Secure Admin password hash (SHA-256)
 # In a real app, these credentials should be stored in a secure secrets manager or database.
 ADMIN_PASSWORD_HASH = hashlib.sha256("admin".encode()).hexdigest()
+USERS_FILE = "users.json"
 
 st.set_page_config(page_title="Elhawey School Portal", layout="wide")
 st.title(" Elhawey Chatbot")
@@ -211,38 +213,39 @@ class SchoolDatabase(DatabaseManager):
                 conn.close()
 
     def add_user(self, username, password_hash, email):
-        """Adds a new user record."""
-        conn = None
+        """Adds a new user record to users.json."""
         try:
-            conn = self._get_connection()
-            cursor = conn.cursor()
-            query = "INSERT INTO users (username, password_hash, email) VALUES (%s, %s, %s)"
-            cursor.execute(query, (username, password_hash, email))
-            conn.commit()
+            users = []
+            try:
+                with open(USERS_FILE, "r") as f:
+                    users = json.load(f)
+            except FileNotFoundError:
+                pass
+            
+            users.append({
+                "username": username,
+                "password_hash": password_hash,
+                "email": email
+            })
+            
+            with open(USERS_FILE, "w") as f:
+                json.dump(users, f, indent=4)
             return True
-        except mysql.connector.Error as e:
-            st.error(f"Registration error: {e}")
+        except Exception as e:
+            st.error(f"File write error: {e}")
             return False
-        finally:
-            if conn and conn.is_connected():
-                cursor.close()
-                conn.close()
 
     def get_user_by_username(self, username):
-        """Retrieves user details by username."""
-        conn = None
+        """Retrieves user details by username from users.json."""
         try:
-            conn = self._get_connection()
-            cursor = conn.cursor(dictionary=True)
-            cursor.execute("SELECT user_id, username, password_hash, email FROM users WHERE username = %s", (username,))
-            return cursor.fetchone()
-        except mysql.connector.Error as e:
-            st.error(f"Database error: {e}")
+            with open(USERS_FILE, "r") as f:
+                users = json.load(f)
+                for user in users:
+                    if user['username'] == username:
+                        return user
             return None
-        finally:
-            if conn and conn.is_connected():
-                cursor.close()
-                conn.close()
+        except (FileNotFoundError, json.JSONDecodeError):
+            return None
 
 db = SchoolDatabase(db_config)
 
