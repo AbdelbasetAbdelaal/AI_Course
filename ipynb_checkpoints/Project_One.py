@@ -1,11 +1,12 @@
 # =====================================================
-# Name        : chatbot.py
-# Copyright   : Edges For Training
+# Name        : Project_One.py.py
+# Copyright   : Abdelbaset Abdelaal
 # =====================================================
 
 import streamlit as st
 import time
 import mysql.connector
+from abc import ABC, abstractmethod
 import hashlib
 from PIL import Image
 
@@ -17,10 +18,11 @@ db_config = {
     'database': 'school_db'
 }
 
-# Admin password (for demonstration purposes, use a strong, hashed password in production)
+# Secure Admin password hash (SHA-256)
+# In a real app, these credentials should be stored in a secure secrets manager or database.
 ADMIN_PASSWORD_HASH = hashlib.sha256("admin".encode()).hexdigest()
 
-st.set_page_config(page_title="Chatbot Demo", layout="wide")
+st.set_page_config(page_title="Elhawey School Portal", layout="wide")
 st.title(" Elhawey Chatbot")
 
 # Helper function to simulate streaming response
@@ -29,16 +31,29 @@ def response_generator(text):
         yield word + " "
         time.sleep(0.05)
 
-class SchoolDatabase:
-    """OOP implementation for school database operations."""
+class DatabaseManager(ABC):
+    """Abstract Base Class demonstrating Abstraction."""
     def __init__(self, config):
-        self.config = config
+        # Encapsulation: Private attribute to hide configuration details
+        self.__config = config
 
+    @property
+    def _config(self):
+        return self.__config
+
+    @abstractmethod
     def _get_connection(self):
-        return mysql.connector.connect(**self.config)
+        """Abstract method to be implemented by subclasses (Polymorphism)."""
+        pass
+
+class SchoolDatabase(DatabaseManager):
+    """Implementation demonstrating Inheritance."""
+    def _get_connection(self):
+        return mysql.connector.connect(**self._config)
 
     def fetch_students(self):
         """Read-access: Fetches student records."""
+        conn = None
         try:
             conn = self._get_connection()
             cursor = conn.cursor(dictionary=True)
@@ -48,12 +63,13 @@ class SchoolDatabase:
             st.error(f"Read error: {e}")
             return None
         finally:
-            if 'conn' in locals() and conn.is_connected():
+            if conn and conn.is_connected():
                 cursor.close()
                 conn.close()
 
     def fetch_teachers(self):
         """Read-access: Fetches teacher records."""
+        conn = None
         try:
             conn = self._get_connection()
             cursor = conn.cursor(dictionary=True)
@@ -63,12 +79,13 @@ class SchoolDatabase:
             st.error(f"Read error: {e}")
             return None
         finally:
-            if 'conn' in locals() and conn.is_connected():
+            if conn and conn.is_connected():
                 cursor.close()
                 conn.close()
 
     def update_student(self, student_id, fname, lname, grade, email):
         """Update an existing student record in the database."""
+        conn = None
         try:
             conn = self._get_connection()
             cursor = conn.cursor()
@@ -80,12 +97,13 @@ class SchoolDatabase:
             st.error(f"Update error: {e}")
             return False
         finally:
-            if 'conn' in locals() and conn.is_connected():
+            if conn and conn.is_connected():
                 cursor.close()
                 conn.close()
 
     def update_teacher(self, teacher_id, fname, lname, subject, email):
         """Update an existing teacher record in the database."""
+        conn = None
         try:
             conn = self._get_connection()
             cursor = conn.cursor()
@@ -97,12 +115,13 @@ class SchoolDatabase:
             st.error(f"Update error: {e}")
             return False
         finally:
-            if 'conn' in locals() and conn.is_connected():
+            if conn and conn.is_connected():
                 cursor.close()
                 conn.close()
 
     def delete_student(self, student_id):
         """Remove a student record from the database."""
+        conn = None
         try:
             conn = self._get_connection()
             cursor = conn.cursor()
@@ -113,12 +132,13 @@ class SchoolDatabase:
             st.error(f"Delete error: {e}")
             return False
         finally:
-            if 'conn' in locals() and conn.is_connected():
+            if conn and conn.is_connected():
                 cursor.close()
                 conn.close()
 
     def delete_teacher(self, teacher_id):
         """Remove a teacher record from the database."""
+        conn = None
         try:
             conn = self._get_connection()
             cursor = conn.cursor()
@@ -129,12 +149,13 @@ class SchoolDatabase:
             st.error(f"Delete error: {e}")
             return False
         finally:
-            if 'conn' in locals() and conn.is_connected():
+            if conn and conn.is_connected():
                 cursor.close()
                 conn.close()
 
     def add_student(self, fname, lname, grade, email):
         """Write-access: Adds a new student record."""
+        conn = None
         try:
             conn = self._get_connection()
             cursor = conn.cursor()
@@ -146,12 +167,13 @@ class SchoolDatabase:
             st.error(f"Write error: {e}")
             return False
         finally:
-            if 'conn' in locals() and conn.is_connected():
+            if conn and conn.is_connected():
                 cursor.close()
                 conn.close()
 
     def add_teacher(self, fname, lname, subject, email):
         """Write-access: Adds a new teacher record."""
+        conn = None
         try:
             conn = self._get_connection()
             cursor = conn.cursor()
@@ -163,7 +185,7 @@ class SchoolDatabase:
             st.error(f"Write error: {e}")
             return False
         finally:
-            if 'conn' in locals() and conn.is_connected():
+            if conn and conn.is_connected():
                 cursor.close()
                 conn.close()
 
@@ -182,13 +204,14 @@ st.sidebar.title("Settings")
 if "admin_authenticated" not in st.session_state:
     st.session_state.admin_authenticated = False
 
-# Role-Based Access Control (RBAC)
+# --- Role-Based Access Control (RBAC) ---
 role = st.sidebar.selectbox("Identity Role", ["User", "Admin"])
 st.sidebar.write(f"Access Level: **{role}**")
 
-# Admin password input
+# Logic for Admin authentication
 if role == "Admin" and not st.session_state.admin_authenticated:
     password_input = st.sidebar.text_input("Admin Password", type="password")
+    # Basic login mechanism
     if st.sidebar.button("Login"):
         if hashlib.sha256(password_input.encode()).hexdigest() == ADMIN_PASSWORD_HASH:
             st.session_state.admin_authenticated = True
@@ -200,10 +223,12 @@ elif role == "Admin" and st.session_state.admin_authenticated:
     if st.sidebar.button("Logout"):
         st.session_state.admin_authenticated = False
 
+# --- Database Query Buttons ---
 if st.sidebar.button("🎓 Fetch Student Records"):
     with st.spinner("Connecting to database..."):
         data = db.fetch_students()
         if data is not None:
+            # Store results in session state to persist between reruns
             st.session_state.db_results = data
             st.session_state.db_view = "students"
             st.sidebar.success(f"Successfully fetched {len(data)} records.")
@@ -221,6 +246,7 @@ if role == "Admin" and st.session_state.admin_authenticated:
     st.sidebar.markdown("---")
     st.sidebar.subheader("Admin: Database Entry")
     
+    # Form to add students - demonstrates standard CRUD 'Create'
     with st.sidebar.expander("➕ Add New Student"):
         with st.form("student_form", clear_on_submit=True):
             fn = st.text_input("First Name")
@@ -237,6 +263,7 @@ if role == "Admin" and st.session_state.admin_authenticated:
                 else:
                     st.sidebar.error("All fields are required.")
 
+    # Form to add teachers
     with st.sidebar.expander("➕ Add New Teacher"):
         with st.form("teacher_form", clear_on_submit=True):
             tfn = st.text_input("First Name")
@@ -250,6 +277,7 @@ if role == "Admin" and st.session_state.admin_authenticated:
                 else:
                     st.sidebar.error("All fields are required.")
 
+# --- Sidebar Utilities ---
 delay = st.sidebar.slider("Response delay (s)", 0.0, 5.0, 1.0)
 uploaded_files = st.sidebar.file_uploader(
     "Upload files", type=["txt", "png", "jpg", "jpeg", "pdf", "py", "csv"],
@@ -257,9 +285,11 @@ uploaded_files = st.sidebar.file_uploader(
     accept_multiple_files=True
 )
 
+# Process uploaded files to generate summaries for the chatbot
 file_summaries = []
 if uploaded_files:
     for uploaded_file in uploaded_files:
+        # Handle different MIME types accordingly
         if uploaded_file.type == "text/plain":
             # Handle text files
             content = uploaded_file.read().decode("utf-8")
@@ -275,10 +305,11 @@ if uploaded_files:
         else:
             file_summaries.append(f"File '{uploaded_file.name}' (Type: {uploaded_file.type})")
 
+# Option to reset chat session
 if st.sidebar.button("➕ New Chat"):
     create_new_chat()
 
-# Display Database Results if they exist in session state
+# --- Main UI: Database Editor ---
 if "db_results" in st.session_state:
     st.data_editor(
         st.session_state.db_results,
@@ -290,6 +321,7 @@ if "db_results" in st.session_state:
 
     col1, col2 = st.columns(2)
     with col1:
+        # Synchronization logic for the data editor
         if st.button("💾 Save All Changes to Database", type="primary"):
             # Access the specific changes from session state
             state = st.session_state["student_editor"]
@@ -331,11 +363,13 @@ if "db_results" in st.session_state:
                     db.delete_teacher(id_to_del)
             
             st.success("Database synced successfully!")
+            # Refresh local session state with the latest DB version
             if view == "students":
                 st.session_state.db_results = db.fetch_students()
             else:
                 st.session_state.db_results = db.fetch_teachers()
             st.rerun()
+            
     with col2:
         if st.button("🗑️ Clear Table View"):
             del st.session_state.db_results
@@ -345,7 +379,7 @@ if "db_results" in st.session_state:
 if "messages" not in st.session_state:
     st.session_state.messages = []
 if not st.session_state.messages:
-    st.session_state.messages.append({"role": "assistant", "content": "Hello! I am a chatbot. Ask me anything."})
+    st.session_state.messages.append({"role": "assistant", "content": "Welcome to the School Portal! How can I help you today?"})
 
 # Display existing chat messages
 for msg in st.session_state.messages:
@@ -376,7 +410,7 @@ if user_input:
         st.write_stream(response_generator(response))
         st.session_state.messages.append({"role": "assistant", "content": response})
 
-# Add download functionality
+# --- Main UI: Chat Export ---
 # Ensure the button is visible as long as there are messages (including greeting)
 if "messages" in st.session_state and st.session_state.messages:
     chat_text = "\n".join([f"{msg['role']}: {msg['content']}" for msg in st.session_state.messages])
