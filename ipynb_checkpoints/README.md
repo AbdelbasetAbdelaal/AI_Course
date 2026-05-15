@@ -15,6 +15,7 @@ A comprehensive Streamlit application that integrates an interactive chatbot wit
 ### 1. Interactive Chatbot
 - **Typewriter Effect:** Uses Python generators to simulate a "typing" response from the AI.
 - **File Awareness:** The chatbot can acknowledge and summarize files uploaded by the user.
+- **Database Querying:** Processes natural language requests to list, count, or find specific student and teacher records in real-time.
 - **History Export:** Users can download their current chat session as a `.txt` file.
 
 ### 2. School Database Management
@@ -26,8 +27,8 @@ A comprehensive Streamlit application that integrates an interactive chatbot wit
 - **Live Data Editor:** Uses `st.data_editor` to allow batch updates and deletions directly in a spreadsheet-like UI.
 
 ### 3. Security & RBAC
-- **Role-Based Access Control:** Distinguishes between standard `Users` and `Admins`.
-- **Protected Actions:** Write operations (Add/Update/Delete) are strictly locked behind an Admin password.
+- **User Authentication:** Includes a self-service registration and login system for standard users.
+- **Role-Based Access Control:** Restricts database management, batch editing, and administrative tools to authenticated Admins.
 
 ## 📖 How to Use
 
@@ -54,3 +55,13 @@ A comprehensive Streamlit application that integrates an interactive chatbot wit
    ```
 4. Run the app: `streamlit run Project_One.py`
 5. Default Admin Password: `admin`
+
+## 🧪 How to Test the Chatbot
+
+1. **Register a User:** Click the "User Login/Register" button in the sidebar and create a new account.
+2. **Log In:** Use your new credentials to log in. You will be automatically redirected to the Chatbot page.
+3. **Ask Database Queries:** Interact with the chatbot by typing queries such as:
+    - *"List all students"*
+    - *"How many teachers are registered in the system?"*
+    - *"Find student Alice Johnson"* (Note: Ensure the record exists in your MySQL database).
+4. **Verify Admin Sync:** Log in as Admin (password: `admin`), modify a record in the dashboard, then log back in as a user and ask the chatbot for that record to verify real-time synchronization.
