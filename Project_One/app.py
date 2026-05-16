@@ -13,8 +13,9 @@ DB_CONFIG = {
 }
 ADMIN_PASSWORD_HASH = hashlib.sha256("admin".encode()).hexdigest()
 
-st.set_page_config(page_title="Elhawey School Portal", layout="wide")
-st.title(" Elhawey Chatbot")
+st.set_page_config(page_title="Elhawey School Portal", layout="wide", page_icon="🏫")
+
+st.title("🏫 Elhawey Chatbot")
 
 # Initialize Classes
 db = SchoolDatabase(DB_CONFIG)
