@@ -55,8 +55,10 @@ class StudentListIntent(Intent):
 class SearchStudentByNameIntent(Intent):
     pattern = r"(find|search|who is|tell me about).*student"
     def resolve(self, query, db, is_admin, files):
-        words = query.split()
-        ignore = {"search", "find", "for", "a", "an", "the", "student", "students", "who", "is", "about"}
+        # Clean up the query to extract name parts
+        cleaned_query = re.sub(r"(find|search|for|a|an|the|student|students|who|is|about|tell|me)", "", query, flags=re.IGNORECASE).strip()
+        words = cleaned_query.split()
+        ignore = {"student", "students"}
         name_parts = [w.capitalize() for w in words if w not in ignore]
         
         if not name_parts: return "Which student are you looking for?"
@@ -64,7 +66,7 @@ class SearchStudentByNameIntent(Intent):
         fname = name_parts[0]
         lname = name_parts[1] if len(name_parts) > 1 else ""
         student = db.fetch_student_by_name(fname, lname)
-        
+
         if student:
             return f"I found student **{student['first_name']} {student['last_name']}**: Grade {student['grade_level']}, Email: {student['email']}."
         return f"I couldn't find a student named '{' '.join(name_parts)}'."

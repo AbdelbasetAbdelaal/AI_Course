@@ -1,5 +1,6 @@
 import mysql.connector
-import json
+from mysql.connector import pooling
+import logging
 from abc import ABC, abstractmethod
 
 class DatabaseError(Exception):
@@ -10,21 +11,67 @@ class DatabaseManager(ABC):
     """Abstract Base Class for Database Management."""
     def __init__(self, config):
         self.__config = config
+        try:
+            self._pool = pooling.MySQLConnectionPool(
+                pool_name="school_pool",
+                pool_size=5,
+                **self.__config
+            )
+        except mysql.connector.Error as e:
+            raise DatabaseError(f"Error creating connection pool: {e}")
 
     @property
     def _config(self):
         return self.__config
 
-    @abstractmethod
     def _get_connection(self):
-        pass
+        try:
+            return self._pool.get_connection()
+        except mysql.connector.Error as e:
+            raise DatabaseError(f"Failed to get connection from pool: {e}")
 
 class SchoolDatabase(DatabaseManager):
     """Implementation of database operations for the School Portal."""
-    USERS_FILE = "users.json"
 
-    def _get_connection(self):
-        return mysql.connector.connect(**self._config)
+    def setup_database(self):
+        """Ensures all necessary tables exist."""
+        tables = {
+            "students": """
+                CREATE TABLE IF NOT EXISTS students (
+                    student_id INT AUTO_INCREMENT PRIMARY KEY,
+                    first_name VARCHAR(50),
+                    last_name VARCHAR(50),
+                    grade_level INT,
+                    email VARCHAR(100)
+                )
+            """,
+            "teachers": """
+                CREATE TABLE IF NOT EXISTS teachers (
+                    teacher_id INT AUTO_INCREMENT PRIMARY KEY,
+                    first_name VARCHAR(50),
+                    last_name VARCHAR(50),
+                    subject VARCHAR(50),
+                    email VARCHAR(100)
+                )
+            """,
+            "users": """
+                CREATE TABLE IF NOT EXISTS users (
+                    user_id INT AUTO_INCREMENT PRIMARY KEY,
+                    username VARCHAR(50) UNIQUE,
+                    password_hash VARCHAR(64),
+                    email VARCHAR(100)
+                )
+            """
+        }
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            for table_name, ddl in tables.items():
+                cursor.execute(ddl)
+            conn.commit()
+        finally:
+            cursor.close()
+            conn.close()
 
     def fetch_students(self):
         conn = None
@@ -183,33 +230,32 @@ class SchoolDatabase(DatabaseManager):
                 conn.close()
 
     def add_user(self, username, password_hash, email):
+        conn = None
         try:
-            users = []
-            try:
-                with open(self.USERS_FILE, "r") as f:
-                    users = json.load(f)
-            except FileNotFoundError:
-                pass
-            
-            users.append({
-                "username": username,
-                "password_hash": password_hash,
-                "email": email
-            })
-            
-            with open(self.USERS_FILE, "w") as f:
-                json.dump(users, f, indent=4)
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            query = "INSERT INTO users (username, password_hash, email) VALUES (%s, %s, %s)"
+            cursor.execute(query, (username, password_hash, email))
+            conn.commit()
             return True
-        except Exception as e:
-            raise DatabaseError(f"User registration file error: {e}")
+        except mysql.connector.Error as e:
+            raise DatabaseError(f"User registration failed: {e}")
+        finally:
+            if conn and conn.is_connected():
+                cursor.close()
+                conn.close()
 
     def get_user_by_username(self, username):
+        conn = None
         try:
-            with open(self.USERS_FILE, "r") as f:
-                users = json.load(f)
-                for user in users:
-                    if user['username'] == username:
-                        return user
+            conn = self._get_connection()
+            cursor = conn.cursor(dictionary=True)
+            cursor.execute("SELECT username, password_hash, email FROM users WHERE username = %s", (username,))
+            return cursor.fetchone()
+        except Exception as e:
+            logging.error(f"Error fetching user: {e}")
             return None
-        except (FileNotFoundError, json.JSONDecodeError):
-            return None
+        finally:
+            if conn and conn.is_connected():
+                cursor.close()
+                conn.close()

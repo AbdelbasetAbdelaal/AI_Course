@@ -19,6 +19,11 @@ st.title("🏫 Elhawey Chatbot")
 
 # Initialize Classes
 db = SchoolDatabase(DB_CONFIG)
+try:
+    db.setup_database()
+except DatabaseError as e:
+    st.error(f"Database Initialization Error: {e}")
+
 bot = Chatbot(db)
 
 # Session State Init
