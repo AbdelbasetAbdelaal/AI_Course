@@ -1,7 +1,10 @@
 import mysql.connector
 import json
-import streamlit as st
 from abc import ABC, abstractmethod
+
+class DatabaseError(Exception):
+    """Custom exception for database-related errors."""
+    pass
 
 class DatabaseManager(ABC):
     """Abstract Base Class for Database Management."""
@@ -31,8 +34,7 @@ class SchoolDatabase(DatabaseManager):
             cursor.execute("SELECT student_id, first_name, last_name, grade_level, email FROM students")
             return cursor.fetchall()
         except mysql.connector.Error as e:
-            st.error(f"Read error: {e}")
-            return None
+            raise DatabaseError(f"Failed to fetch students: {e}")
         finally:
             if conn and conn.is_connected():
                 cursor.close()
@@ -46,8 +48,7 @@ class SchoolDatabase(DatabaseManager):
             cursor.execute("SELECT teacher_id, first_name, last_name, subject, email FROM teachers")
             return cursor.fetchall()
         except mysql.connector.Error as e:
-            st.error(f"Read error: {e}")
-            return None
+            raise DatabaseError(f"Failed to fetch teachers: {e}")
         finally:
             if conn and conn.is_connected():
                 cursor.close()
@@ -62,8 +63,7 @@ class SchoolDatabase(DatabaseManager):
             cursor.execute(query, (f"%{subject}%",))
             return cursor.fetchall()
         except mysql.connector.Error as e:
-            st.error(f"Read error: {e}")
-            return None
+            raise DatabaseError(f"Search for subject '{subject}' failed: {e}")
         finally:
             if conn and conn.is_connected():
                 cursor.close()
@@ -82,8 +82,7 @@ class SchoolDatabase(DatabaseManager):
             cursor.execute(query, tuple(params))
             return cursor.fetchone()
         except mysql.connector.Error as e:
-            st.error(f"Read error: {e}")
-            return None
+            raise DatabaseError(f"Student search failed: {e}")
         finally:
             if conn and conn.is_connected():
                 cursor.close()
@@ -99,8 +98,7 @@ class SchoolDatabase(DatabaseManager):
             conn.commit()
             return True
         except mysql.connector.Error as e:
-            st.error(f"Update error: {e}")
-            return False
+            raise DatabaseError(f"Update student failed: {e}")
         finally:
             if conn and conn.is_connected():
                 cursor.close()
@@ -116,8 +114,7 @@ class SchoolDatabase(DatabaseManager):
             conn.commit()
             return True
         except mysql.connector.Error as e:
-            st.error(f"Update error: {e}")
-            return False
+            raise DatabaseError(f"Update teacher failed: {e}")
         finally:
             if conn and conn.is_connected():
                 cursor.close()
@@ -132,8 +129,7 @@ class SchoolDatabase(DatabaseManager):
             conn.commit()
             return True
         except mysql.connector.Error as e:
-            st.error(f"Delete error: {e}")
-            return False
+            raise DatabaseError(f"Delete student failed: {e}")
         finally:
             if conn and conn.is_connected():
                 cursor.close()
@@ -148,8 +144,7 @@ class SchoolDatabase(DatabaseManager):
             conn.commit()
             return True
         except mysql.connector.Error as e:
-            st.error(f"Delete error: {e}")
-            return False
+            raise DatabaseError(f"Delete teacher failed: {e}")
         finally:
             if conn and conn.is_connected():
                 cursor.close()
@@ -165,8 +160,7 @@ class SchoolDatabase(DatabaseManager):
             conn.commit()
             return True
         except mysql.connector.Error as e:
-            st.error(f"Write error: {e}")
-            return False
+            raise DatabaseError(f"Add teacher failed: {e}")
         finally:
             if conn and conn.is_connected():
                 cursor.close()
@@ -182,8 +176,7 @@ class SchoolDatabase(DatabaseManager):
             conn.commit()
             return True
         except mysql.connector.Error as e:
-            st.error(f"Write error: {e}")
-            return False
+            raise DatabaseError(f"Add student failed: {e}")
         finally:
             if conn and conn.is_connected():
                 cursor.close()
@@ -208,8 +201,7 @@ class SchoolDatabase(DatabaseManager):
                 json.dump(users, f, indent=4)
             return True
         except Exception as e:
-            st.error(f"File write error: {e}")
-            return False
+            raise DatabaseError(f"User registration file error: {e}")
 
     def get_user_by_username(self, username):
         try:

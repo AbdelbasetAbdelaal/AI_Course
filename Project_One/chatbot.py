@@ -1,11 +1,104 @@
 import streamlit as st
 import time
 from PIL import Image
+import re
+from database import DatabaseError
+
+class Intent:
+    """Base class for chatbot intents."""
+    pattern = None
+    def matches(self, query, has_files):
+        if self.pattern:
+            return bool(re.search(self.pattern, query, re.IGNORECASE))
+        return False
+    def resolve(self, query, db, is_admin, files):
+        return ""
+
+class WelcomeIntent(Intent):
+    pattern = r"\b(hi|hello|hey|welcome|greetings)\b"
+    def resolve(self, query, db, is_admin, files):
+        return "Hello! I am the Elhawey School Assistant. How can I help you today?"
+
+class StudentCountIntent(Intent):
+    pattern = r"how many.*students?"
+    def resolve(self, query, db, is_admin, files):
+        students = db.fetch_students()
+        return f"There are currently {len(students)} students enrolled in our system."
+
+class TeacherCountIntent(Intent):
+    pattern = r"how many.*teachers?"
+    def resolve(self, query, db, is_admin, files):
+        teachers = db.fetch_teachers()
+        return f"There are currently {len(teachers)} teachers registered in our system."
+
+class TeacherListIntent(Intent):
+    pattern = r"(list|show|who are).*teachers?"
+    def resolve(self, query, db, is_admin, files):
+        teachers = db.fetch_teachers()
+        if not teachers: return "There are no teachers listed in the system."
+        return "Here is a list of our current teachers:\n" + "\n".join([f"- {t['first_name']} {t['last_name']} ({t['subject']})" for t in teachers])
+
+class FileUploadIntent(Intent):
+    pattern = r"(file|upload|analyze)"
+    def matches(self, query, has_files):
+        return has_files and super().matches(query, has_files)
+    def resolve(self, query, db, is_admin, files):
+        return f"I've acknowledged the {len(files)} file(s) you uploaded: " + ", ".join(files) + ". How would you like me to process them?"
+
+class StudentListIntent(Intent):
+    pattern = r"(list|show|who are).*students?"
+    def resolve(self, query, db, is_admin, files):
+        students = db.fetch_students()
+        if not students: return "There are no students listed in the system."
+        return "Here is a list of our current students:\n" + "\n".join([f"- {s['first_name']} {s['last_name']} (Grade: {s['grade_level']})" for s in students])
+
+class SearchStudentByNameIntent(Intent):
+    pattern = r"(find|search|who is|tell me about).*student"
+    def resolve(self, query, db, is_admin, files):
+        words = query.split()
+        ignore = {"search", "find", "for", "a", "an", "the", "student", "students", "who", "is", "about"}
+        name_parts = [w.capitalize() for w in words if w not in ignore]
+        
+        if not name_parts: return "Which student are you looking for?"
+        
+        fname = name_parts[0]
+        lname = name_parts[1] if len(name_parts) > 1 else ""
+        student = db.fetch_student_by_name(fname, lname)
+        
+        if student:
+            return f"I found student **{student['first_name']} {student['last_name']}**: Grade {student['grade_level']}, Email: {student['email']}."
+        return f"I couldn't find a student named '{' '.join(name_parts)}'."
+
+class SearchTeacherBySubjectIntent(Intent):
+    pattern = r"(find|search|who|who's).*teacher"
+    def resolve(self, query, db, is_admin, files):
+        # Extract subject by filtering out common stop words and command keywords
+        words = query.split()
+        ignore = {"search", "find", "for", "a", "an", "the", "teacher", "teachers", "who", "is", "any"}
+        subject_parts = [w for w in words if w not in ignore]
+        subject = " ".join(subject_parts)
+        
+        if not subject: return "What subject are you looking for?"
+        teachers = db.fetch_teachers_by_subject(subject)
+        if not teachers: return f"I couldn't find any teachers for '{subject}'."
+        
+        count_prefix = "The teacher is" if len(teachers) == 1 else f"I found the following {len(teachers)} teachers:"
+        return f"{count_prefix}\n" + "\n".join([f"- {t['first_name']} {t['last_name']} (Subject: {t['subject']})" for t in teachers])
 
 class Chatbot:
     """Handles chatbot logic and UI rendering."""
     def __init__(self, db_manager):
         self.db = db_manager
+        self.intents = [
+            WelcomeIntent(),
+            StudentCountIntent(),
+            TeacherCountIntent(),
+            TeacherListIntent(), 
+            FileUploadIntent(),
+            StudentListIntent(),
+            SearchStudentByNameIntent(),
+            SearchTeacherBySubjectIntent()
+        ]
 
     def response_generator(self, text):
         for word in text.split(" "):
@@ -30,70 +123,17 @@ class Chatbot:
         return summaries
 
     def handle_query(self, user_input, file_summaries, delay, user_name):
-        query_lower = user_input.lower()
+        query = user_input.lower()
         is_admin = (user_name == "Admin")
-        
-        if file_summaries:
-            summary_str = ", ".join(file_summaries)
-            return f"I've received {len(file_summaries)} file(s): {summary_str}. How can I help you analyze them?"
-        
-        if any(word in query_lower for word in ["student", "teacher", "teach", "subject"]):
-            # Predefined Query: Count Records
-            if any(kw in query_lower for kw in ["how many", "count"]):
-                target = "students" if "student" in query_lower else "teachers"
-                data = self.db.fetch_students() if target == "students" else self.db.fetch_teachers()
-                return f"There are currently {len(data)} {target} registered in the system." if data is not None else "Error counting records."
-            
-            # Predefined Query: List Records
-            elif any(kw in query_lower for kw in ["list", "show"]):
-                target = "students" if "student" in query_lower else "teachers"
-                data = self.db.fetch_students() if target == "students" else self.db.fetch_teachers()
-                if data:
-                    if is_admin:
-                        names = [f"{i['first_name']} {i['last_name']} ({i['email']})" for i in data]
-                    else:
-                        names = [f"{i['first_name']} {i['last_name']}" for i in data]
-                    return f"Here is a list of all {target}: " + ", ".join(names)
-                return f"I couldn't find any {target} in the database."
-                
-            # Find specific student
-            elif any(kw in query_lower for kw in ["find", "search", "who is"]) and "student" in query_lower:
-                search_term = query_lower
-                for word in ["find", "search", "for", "about", "who", "is", "student", "the"]:
-                    search_term = search_term.replace(word, "")
-                
-                name_parts = search_term.strip().split()
-                if name_parts:
-                    fname = name_parts[0].capitalize()
-                    lname = name_parts[1].capitalize() if len(name_parts) > 1 else ""
-                    student = self.db.fetch_student_by_name(fname, lname)
-                    if student:
-                        response = f"I found student **{student['first_name']} {student['last_name']}**: Grade {student['grade_level']}"
-                        if is_admin:
-                            response += f", Email: {student['email']}, ID: {student['student_id']}"
-                        return response + "."
-                return "I couldn't find that student. Who should I look up?"
 
-            # Find specific teacher by subject
-            elif any(kw in query_lower for kw in ["teach", "subject", "teacher"]) and \
-                 any(kw in query_lower for kw in ["who", "find", "search", "what", "is"]):
-                search_term = query_lower
-                for word in ["find", "search", "for", "about", "who", "is", "teacher", "the", "teaches", "teach", "subject", "a", "an", "me", "what", "does", "?", ".", "!"]:
-                    search_term = search_term.replace(word, "")
-                
-                subject = search_term.strip()
-                if subject:
-                    teachers = self.db.fetch_teachers_by_subject(subject)
-                    if teachers:
-                        if is_admin:
-                            names = [f"{t['first_name']} {t['last_name']} ({t['email']})" for t in teachers]
-                        else:
-                            names = [f"{t['first_name']} {t['last_name']}" for t in teachers]
-                        return f"I found the following teachers for **{subject.capitalize()}**: " + ", ".join(names) + "."
-                    return f"I couldn't find any teachers for the subject '{subject}'."
-                return "Which subject should I search for?"
-        
-        return f"You said: {user_input}. (Simulated response)"
+        try:
+            for intent in self.intents:
+                if intent.matches(query, bool(file_summaries)):
+                    return intent.resolve(query, self.db, is_admin, file_summaries)
+        except DatabaseError as e:
+            return f"I'm sorry, I'm having trouble accessing the school database right now. Details: {e}"
+
+        return "I'm sorry, I don't know how to handle that request."
 
     def render_chat_interface(self, user_name, delay, file_summaries):
         st.subheader(f"Chatbot ({user_name})")
