@@ -53,6 +53,22 @@ class SchoolDatabase(DatabaseManager):
                 cursor.close()
                 conn.close()
 
+    def fetch_teachers_by_subject(self, subject):
+        conn = None
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor(dictionary=True)
+            query = "SELECT teacher_id, first_name, last_name, subject, email FROM teachers WHERE subject LIKE %s"
+            cursor.execute(query, (f"%{subject}%",))
+            return cursor.fetchall()
+        except mysql.connector.Error as e:
+            st.error(f"Read error: {e}")
+            return None
+        finally:
+            if conn and conn.is_connected():
+                cursor.close()
+                conn.close()
+
     def fetch_student_by_name(self, first_name, last_name=""):
         conn = None
         try:

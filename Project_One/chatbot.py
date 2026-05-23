@@ -37,7 +37,7 @@ class Chatbot:
             summary_str = ", ".join(file_summaries)
             return f"I've received {len(file_summaries)} file(s): {summary_str}. How can I help you analyze them?"
         
-        if any(word in query_lower for word in ["student", "teacher"]):
+        if any(word in query_lower for word in ["student", "teacher", "teach", "subject"]):
             # Predefined Query: Count Records
             if any(kw in query_lower for kw in ["how many", "count"]):
                 target = "students" if "student" in query_lower else "teachers"
@@ -73,6 +73,25 @@ class Chatbot:
                             response += f", Email: {student['email']}, ID: {student['student_id']}"
                         return response + "."
                 return "I couldn't find that student. Who should I look up?"
+
+            # Find specific teacher by subject
+            elif any(kw in query_lower for kw in ["teach", "subject", "teacher"]) and \
+                 any(kw in query_lower for kw in ["who", "find", "search", "what", "is"]):
+                search_term = query_lower
+                for word in ["find", "search", "for", "about", "who", "is", "teacher", "the", "teaches", "teach", "subject", "a", "an", "me", "what", "does", "?", ".", "!"]:
+                    search_term = search_term.replace(word, "")
+                
+                subject = search_term.strip()
+                if subject:
+                    teachers = self.db.fetch_teachers_by_subject(subject)
+                    if teachers:
+                        if is_admin:
+                            names = [f"{t['first_name']} {t['last_name']} ({t['email']})" for t in teachers]
+                        else:
+                            names = [f"{t['first_name']} {t['last_name']}" for t in teachers]
+                        return f"I found the following teachers for **{subject.capitalize()}**: " + ", ".join(names) + "."
+                    return f"I couldn't find any teachers for the subject '{subject}'."
+                return "Which subject should I search for?"
         
         return f"You said: {user_input}. (Simulated response)"
 

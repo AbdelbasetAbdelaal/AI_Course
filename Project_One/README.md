@@ -65,4 +65,5 @@ A comprehensive Streamlit application that integrates an interactive chatbot wit
     - *"List all students"*
     - *"How many teachers are registered in the system?"*
     - *"Find student Alice Johnson"* (Note: Ensure the record exists in your MySQL database).
+    - *"Who is the Math teacher?"* or *"Search for a Science teacher"*
 4. **Verify Admin Sync:** Log in as Admin (password: `admin`), modify a record in the dashboard, then log back in as a user and ask the chatbot for that record to verify real-time synchronization.
