@@ -1,18 +1,38 @@
+from dataclasses import dataclass, asdict
+
+@dataclass
 class Student:
     """Data class representing a Student record."""
-    def __init__(self, student_id, first_name, last_name, grade_level, email):
-        self.student_id = student_id
-        self.first_name = first_name
-        self.last_name = last_name
-        self.grade_level = grade_level
-        self.email = email
+    student_id: int
+    first_name: str
+    last_name: str
+    grade_level: int
+    email: str
+
+    @property
+    def full_name(self) -> str:
+        """Returns the combined first and last name."""
+        return f"{self.first_name} {self.last_name}"
+
+    def to_dict(self) -> dict:
+        """Converts the instance to a dictionary."""
+        return asdict(self)
 
 
+@dataclass
 class Teacher:
     """Data class representing a Teacher record."""
-    def __init__(self, teacher_id, first_name, last_name, subject, email):
-        self.teacher_id = teacher_id
-        self.first_name = first_name
-        self.last_name = last_name
-        self.subject = subject
-        self.email = email
+    teacher_id: int
+    first_name: str
+    last_name: str
+    subject: str
+    email: str
+
+    @property
+    def full_name(self) -> str:
+        """Returns the combined first and last name."""
+        return f"{self.first_name} {self.last_name}"
+
+    def to_dict(self) -> dict:
+        """Converts the instance to a dictionary."""
+        return asdict(self)

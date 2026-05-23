@@ -1,6 +1,7 @@
 import streamlit as st
 import hashlib
 from PIL import Image
+import pandas as pd
 from database import SchoolDatabase, DatabaseError
 from chatbot import Chatbot
 
@@ -11,11 +12,16 @@ DB_CONFIG = {
     'password': '',
     'database': 'school_db'
 }
-ADMIN_PASSWORD_HASH = hashlib.sha256("admin".encode()).hexdigest()
+
+# Helper function for consistent hashing
+def get_hash(text: str) -> str:
+    return hashlib.sha256(text.encode()).hexdigest()
+
+ADMIN_PASSWORD_HASH = get_hash("admin")
 
 st.set_page_config(page_title="Elhawey School Portal", layout="wide", page_icon="🏫")
 
-st.title("🏫 Elhawey Chatbot")
+st.title("🏫 Elhawey School Portal")
 
 # Initialize Classes
 db = SchoolDatabase(DB_CONFIG)
@@ -39,13 +45,13 @@ if "current_page" not in st.session_state:
 def create_new_chat():
     st.session_state.messages = []
     st.session_state.uploader_key = st.session_state.get("uploader_key", 0) + 1
-    st.rerun()
 
 # --- Sidebar Navigation ---
 st.sidebar.title("Settings")
 if st.session_state.admin_authenticated or st.session_state.user_authenticated:
-    st.sidebar.success(f"Logged in as: {st.session_state.logged_in_username or 'Admin'}")
-    
+    display_name = st.session_state.logged_in_username or 'Admin'
+    st.sidebar.success(f"Logged in as: {display_name}")
+
     # Admin-specific navigation
     if st.session_state.admin_authenticated:
         if st.sidebar.button("📊 Admin Dashboard"):
@@ -53,6 +59,10 @@ if st.session_state.admin_authenticated or st.session_state.user_authenticated:
         if st.sidebar.button("💬 Chatbot"):
             st.session_state.current_page = "chatbot"
             
+    # Home Link
+    if st.sidebar.button("🏠 Home"):
+        st.session_state.current_page = "home"
+
     if st.sidebar.button("Logout"):
         st.session_state.admin_authenticated = False
         st.session_state.user_authenticated = False
@@ -69,44 +79,61 @@ st.sidebar.markdown("---")
 
 # --- Pages ---
 if st.session_state.current_page == "home":
-    st.write("Please select a role from the sidebar to proceed.")
+    st.subheader("Welcome to Elhawey School Portal")
+    st.write("Select an option below to get started.")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("User Access", use_container_width=True):
+            st.session_state.current_page = "user_login_register"
+            st.rerun()
+    with col2:
+        if st.button("Administrator Access", use_container_width=True):
+            st.session_state.current_page = "admin_login"
+            st.rerun()
 
 elif st.session_state.current_page == "user_login_register":
-    st.sidebar.subheader("User Login / Registration")
-    with st.sidebar.form("user_login_form"):
-        st.markdown("#### Login")
-        u, p = st.text_input("Username"), st.text_input("Password", type="password")
-        if st.form_submit_button("Login"):
-            try:
-                user = db.get_user_by_username(u)
-                if user and hashlib.sha256(p.encode()).hexdigest() == user['password_hash']:
-                    st.session_state.user_authenticated, st.session_state.logged_in_username = True, u
-                    st.session_state.current_page = "chatbot"
-                    st.rerun()
-                else: st.sidebar.error("Invalid credentials.")
-            except DatabaseError as e:
-                st.error(e)
+    st.subheader("User Portal")
+    tab1, tab2 = st.tabs(["Login", "Registration"])
+    
+    with tab1:
+        with st.form("user_login_form"):
+            st.markdown("#### Login")
+            u, p = st.text_input("Username"), st.text_input("Password", type="password")
+            if st.form_submit_button("Login"):
+                try:
+                    user = db.get_user_by_username(u)
+                    if user and get_hash(p) == user['password_hash']:
+                        st.session_state.user_authenticated, st.session_state.logged_in_username = True, u
+                        st.session_state.current_page = "chatbot"
+                        st.rerun()
+                    else: st.error("Invalid credentials.")
+                except DatabaseError as e:
+                    st.error(f"Login error: {e}")
 
-    with st.sidebar.form("user_registration_form"):
-        st.markdown("#### Register")
-        ru, rp, rcp = st.text_input("New Username"), st.text_input("New Password", type="password"), st.text_input("Confirm", type="password")
-        re = st.text_input("Email")
-        if st.form_submit_button("Register"):
-            try:
-                if ru and rp == rcp and not db.get_user_by_username(ru):
-                    if db.add_user(ru, hashlib.sha256(rp.encode()).hexdigest(), re):
-                        st.sidebar.success("Registered! Please log in.")
-                else: st.sidebar.error("Check inputs or username exists.")
-            except DatabaseError as e:
-                st.error(e)
+    with tab2:
+        with st.form("user_registration_form"):
+            st.markdown("#### Register")
+            ru, rp, rcp = st.text_input("New Username"), st.text_input("New Password", type="password"), st.text_input("Confirm Password", type="password")
+            re = st.text_input("Email")
+            if st.form_submit_button("Register"):
+                try:
+                    if ru and rp == rcp and not db.get_user_by_username(ru):
+                        if db.add_user(ru, get_hash(rp), re):
+                            st.success("Registered successfully! You can now log in.")
+                    else: st.error("Passwords mismatch or username already exists.")
+                except DatabaseError as e:
+                    st.error(f"Registration error: {e}")
 
 elif st.session_state.current_page == "admin_login":
-    st.sidebar.subheader("Admin Login")
-    ap = st.sidebar.text_input("Password", type="password")
-    if st.sidebar.button("Login"):
-        if hashlib.sha256(ap.encode()).hexdigest() == ADMIN_PASSWORD_HASH:
+    st.subheader("Administrator Login")
+    ap = st.text_input("Enter Admin Password", type="password")
+    if st.button("Login"):
+        if get_hash(ap) == ADMIN_PASSWORD_HASH:
             st.session_state.admin_authenticated, st.session_state.current_page = True, "admin_dashboard"
             st.rerun()
+        else:
+            st.error("Incorrect administrator password.")
 
 # --- Admin Dashboard ---
 if st.session_state.admin_authenticated and st.session_state.current_page == "admin_dashboard":
@@ -129,11 +156,31 @@ if st.session_state.admin_authenticated and st.session_state.current_page == "ad
             if st.form_submit_button("Save"):
                 try:
                     success = db.add_student(fn, ln, extra, email) if mode == "Student" else db.add_teacher(fn, ln, extra, email)
-                    if success: st.sidebar.success("Saved!")
+                    if success: 
+                        st.sidebar.success("Record Added Successfully!")
+                        # Refresh view if current results match the added type
+                        if "db_view" in st.session_state and st.session_state.db_view.lower().startswith(mode.lower()):
+                            st.session_state.db_results = db.fetch_students() if mode == "Student" else db.fetch_teachers()
                 except DatabaseError as e:
                     st.sidebar.error(e)
 
     st.subheader("Admin Dashboard")
+    
+    # --- Statistics Section ---
+    with st.expander("📊 School Analytics", expanded=False):
+        try:
+            stats = db.get_grade_distribution()
+            if stats:
+                df_stats = pd.DataFrame(stats)
+                col1, col2 = st.columns([1, 2])
+                col1.metric("Total Students", df_stats['count'].sum())
+                col2.bar_chart(df_stats.set_index('grade_level'))
+            else:
+                st.info("No student data available for analytics.")
+        except DatabaseError as e:
+            st.error(f"Could not load analytics: {e}")
+
+    # --- Data Editor Section ---
     if "db_results" in st.session_state:
         edited = st.data_editor(st.session_state.db_results, key="editor", use_container_width=True, num_rows="dynamic", disabled=["student_id", "teacher_id"])
         
@@ -141,22 +188,33 @@ if st.session_state.admin_authenticated and st.session_state.current_page == "ad
         if c1.button("💾 Sync Database", type="primary"):
             try:
                 state, view = st.session_state["editor"], st.session_state["db_view"]
+                results = st.session_state.db_results
+                
                 # Process edits
                 for idx, changes in state["edited_rows"].items():
-                    row = {**st.session_state.db_results[idx], **changes}
-                    if view == "students": db.update_student(row['student_id'], row['first_name'], row['last_name'], row['grade_level'], row['email'])
-                    else: db.update_teacher(row['teacher_id'], row['first_name'], row['last_name'], row['subject'], row['email'])
+                    row = {**results[idx], **changes}
+                    if view == "students": 
+                        db.update_student(row['student_id'], row['first_name'], row['last_name'], row['grade_level'], row['email'])
+                    else: 
+                        db.update_teacher(row['teacher_id'], row['first_name'], row['last_name'], row['subject'], row['email'])
+                        
                 # Process additions
                 for r in state["added_rows"]:
-                    if view == "students": db.add_student(r.get('first_name',''), r.get('last_name',''), r.get('grade_level',1), r.get('email',''))
-                    else: db.add_teacher(r.get('first_name',''), r.get('last_name',''), r.get('subject',''), r.get('email',''))
+                    if view == "students": 
+                        db.add_student(r.get('first_name',''), r.get('last_name',''), r.get('grade_level',1), r.get('email',''))
+                    else: 
+                        db.add_teacher(r.get('first_name',''), r.get('last_name',''), r.get('subject',''), r.get('email',''))
+                        
                 # Process deletions
                 for idx in state["deleted_rows"]:
-                    rid = st.session_state.db_results[idx]['student_id' if view == "students" else 'teacher_id']
-                    if view == "students": db.delete_student(rid)
-                    else: db.delete_teacher(rid)
+                    rid = results[idx]['student_id' if view == "students" else 'teacher_id']
+                    if view == "students": 
+                        db.delete_student(rid)
+                    else: 
+                        db.delete_teacher(rid)
                 
                 st.session_state.db_results = db.fetch_students() if view == "students" else db.fetch_teachers()
+                st.success("Changes synced with the database.")
                 st.rerun()
             except DatabaseError as e:
                 st.error(f"Sync failed: {e}")
