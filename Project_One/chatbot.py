@@ -29,8 +29,9 @@ class Chatbot:
                 summaries.append(f"File '{uploaded_file.name}' (Type: {uploaded_file.type})")
         return summaries
 
-    def handle_query(self, user_input, file_summaries, delay):
+    def handle_query(self, user_input, file_summaries, delay, user_name):
         query_lower = user_input.lower()
+        is_admin = (user_name == "Admin")
         
         if file_summaries:
             summary_str = ", ".join(file_summaries)
@@ -48,7 +49,10 @@ class Chatbot:
                 target = "students" if "student" in query_lower else "teachers"
                 data = self.db.fetch_students() if target == "students" else self.db.fetch_teachers()
                 if data:
-                    names = [f"{i['first_name']} {i['last_name']}" for i in data]
+                    if is_admin:
+                        names = [f"{i['first_name']} {i['last_name']} ({i['email']})" for i in data]
+                    else:
+                        names = [f"{i['first_name']} {i['last_name']}" for i in data]
                     return f"Here is a list of all {target}: " + ", ".join(names)
                 return f"I couldn't find any {target} in the database."
                 
@@ -64,7 +68,10 @@ class Chatbot:
                     lname = name_parts[1].capitalize() if len(name_parts) > 1 else ""
                     student = self.db.fetch_student_by_name(fname, lname)
                     if student:
-                        return f"I found student **{student['first_name']} {student['last_name']}**: Grade {student['grade_level']}, Email: {student['email']}."
+                        response = f"I found student **{student['first_name']} {student['last_name']}**: Grade {student['grade_level']}"
+                        if is_admin:
+                            response += f", Email: {student['email']}, ID: {student['student_id']}"
+                        return response + "."
                 return "I couldn't find that student. Who should I look up?"
         
         return f"You said: {user_input}. (Simulated response)"
@@ -89,7 +96,7 @@ class Chatbot:
             with st.chat_message("assistant"):
                 with st.spinner("Assistant is typing..."):
                     time.sleep(delay)
-                    response = self.handle_query(user_input, file_summaries, delay)
+                    response = self.handle_query(user_input, file_summaries, delay, user_name)
 
                 st.write_stream(self.response_generator(response))
                 st.session_state.messages.append({"role": "assistant", "content": response})

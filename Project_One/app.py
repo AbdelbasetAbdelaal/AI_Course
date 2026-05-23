@@ -39,6 +39,15 @@ def create_new_chat():
 # --- Sidebar Navigation ---
 st.sidebar.title("Settings")
 if st.session_state.admin_authenticated or st.session_state.user_authenticated:
+    st.sidebar.success(f"Logged in as: {st.session_state.logged_in_username or 'Admin'}")
+    
+    # Admin-specific navigation
+    if st.session_state.admin_authenticated:
+        if st.sidebar.button("📊 Admin Dashboard"):
+            st.session_state.current_page = "admin_dashboard"
+        if st.sidebar.button("💬 Chatbot"):
+            st.session_state.current_page = "chatbot"
+            
     if st.sidebar.button("Logout"):
         st.session_state.admin_authenticated = False
         st.session_state.user_authenticated = False
@@ -135,7 +144,7 @@ if st.session_state.admin_authenticated and st.session_state.current_page == "ad
             st.rerun()
 
 # --- Chatbot Page ---
-if st.session_state.current_page == "chatbot" or (st.session_state.user_authenticated and st.session_state.current_page == "chatbot"):
+if st.session_state.current_page == "chatbot":
     delay = st.sidebar.slider("Delay", 0.0, 5.0, 1.0)
     files = st.sidebar.file_uploader("Upload", accept_multiple_files=True, key=st.session_state.get("uploader_key", 0))
     summaries = bot.process_uploads(files) if files else []
