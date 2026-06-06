@@ -1,3 +1,4 @@
+# Standard libraries for MySQL connection and utility
 import mysql.connector
 from mysql.connector import pooling
 import logging
@@ -5,6 +6,7 @@ from abc import ABC
 from contextlib import contextmanager
 from typing import List, Dict, Any, Optional, Union
 
+# Set up logging for tracking database errors
 logger = logging.getLogger(__name__)
 
 class DatabaseError(Exception):
@@ -12,10 +14,11 @@ class DatabaseError(Exception):
     pass
 
 class DatabaseManager(ABC):
-    """Abstract Base Class for Database Management."""
+    """Abstract Base Class providing connection pooling and cursor lifecycle management."""
     def __init__(self, config: Dict[str, Any]):
         self.__config = config
         try:
+            # Initialize a connection pool to reuse database connections efficiently
             self._pool = pooling.MySQLConnectionPool(
                 pool_name="school_pool",
                 pool_size=5,
@@ -34,7 +37,7 @@ class DatabaseManager(ABC):
         conn = None
         cursor = None
         try:
-            conn = self._pool.get_connection()
+            conn = self._pool.get_connection() # Fetch a connection from the pool
             cursor = conn.cursor(dictionary=dictionary)
             yield cursor
             conn.commit()
@@ -44,13 +47,14 @@ class DatabaseManager(ABC):
             logger.error(f"Database operation failed: {e}")
             raise DatabaseError(f"Database error: {e}")
         finally:
+            # Ensure resources are released back to the pool even if an error occurs
             if cursor:
                 cursor.close()
             if conn:
                 conn.close()
 
 class SchoolDatabase(DatabaseManager):
-    """Implementation of database operations for the School Portal."""
+    """High-level implementation of school-specific database operations."""
 
     def setup_database(self):
         """Ensures all necessary tables exist."""

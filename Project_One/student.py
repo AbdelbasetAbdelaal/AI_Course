@@ -1,8 +1,9 @@
+# Dataclasses provide a concise way to create classes that primarily store data
 from dataclasses import dataclass, asdict
 
 @dataclass
 class Student:
-    """Data class representing a Student record."""
+    """Schema for a Student record matching the database structure."""
     student_id: int
     first_name: str
     last_name: str
@@ -21,7 +22,7 @@ class Student:
 
 @dataclass
 class Teacher:
-    """Data class representing a Teacher record."""
+    """Schema for a Teacher record matching the database structure."""
     teacher_id: int
     first_name: str
     last_name: str

@@ -1,36 +1,52 @@
+# Import necessary libraries for UI, security, environment, and data handling
 import streamlit as st
 import hashlib
+import os
 from PIL import Image
 import pandas as pd
 from database import SchoolDatabase, DatabaseError
 from chatbot import Chatbot
 
-# Configuration
-DB_CONFIG = {
-    'host': '127.0.0.1',
-    'user': 'root',
-    'password': '',
-    'database': 'school_db'
-}
+# Configure the main Streamlit page settings
+st.set_page_config(page_title="Elhawey School Portal", layout="wide", page_icon="🏫")
 
-# Helper function for consistent hashing
+# --- Proxy Configuration (Useful for corporate environments or restricted networks) ---
+# Set these to your proxy address. 
+# Format: "http://user:password@host:port" or just "http://host:port"
+USE_PROXY = False  # Set to True to enable
+PROXY_URL = "http://your-proxy-address:8080"
+if USE_PROXY:
+    os.environ["HTTP_PROXY"] = PROXY_URL
+    os.environ["HTTPS_PROXY"] = PROXY_URL
+
+# Configuration: Safely retrieve MySQL credentials from Streamlit's secrets management
+db_config = st.secrets.get("mysql")
+if not db_config:
+    st.error("MySQL database configuration not found in Streamlit secrets. Please ensure it's configured under the [mysql] section.")
+    st.stop() # Halt execution if database config is missing
+
+
+# Helper function to hash passwords using SHA-256 for security
 def get_hash(text: str) -> str:
     return hashlib.sha256(text.encode()).hexdigest()
 
-ADMIN_PASSWORD_HASH = get_hash("admin")
-
-st.set_page_config(page_title="Elhawey School Portal", layout="wide", page_icon="🏫")
+# Load admin password from secrets or default to 'admin' (hashed)
+ADMIN_PASSWORD_HASH = st.secrets.get("ADMIN_PASSWORD_HASH", get_hash("admin"))
 
 st.title("🏫 Elhawey School Portal")
 
-# Initialize Classes
-db = SchoolDatabase(DB_CONFIG)
+# Initialize the Database connection
+db = SchoolDatabase(db_config)
 try:
-    db.setup_database()
+    db.setup_database() # Create tables if they don't exist
 except DatabaseError as e:
     st.error(f"Database Initialization Error: {e}")
 
-bot = Chatbot(db)
+# Initialize the AI Chatbot with the Gemini API Key
+api_key = st.secrets.get("GOOGLE_API_KEY")
+if not api_key:
+    st.sidebar.warning("⚠️ Google API Key not found. AI-powered fallback responses will be disabled.")
+bot = Chatbot(db, api_key=api_key) # Pass the retrieved API key to the Chatbot
 
 # Session State Init
 if "admin_authenticated" not in st.session_state:
@@ -42,6 +58,7 @@ if "logged_in_username" not in st.session_state:
 if "current_page" not in st.session_state:
     st.session_state.current_page = "home"
 
+# Function to reset the chatbot conversation state
 def create_new_chat():
     st.session_state.messages = []
     st.session_state.uploader_key = st.session_state.get("uploader_key", 0) + 1
@@ -63,6 +80,7 @@ if st.session_state.admin_authenticated or st.session_state.user_authenticated:
     if st.sidebar.button("🏠 Home"):
         st.session_state.current_page = "home"
 
+    # Shared Logout logic
     if st.sidebar.button("Logout"):
         st.session_state.admin_authenticated = False
         st.session_state.user_authenticated = False
@@ -70,6 +88,7 @@ if st.session_state.admin_authenticated or st.session_state.user_authenticated:
         st.session_state.current_page = "home"
         st.rerun()
 else:
+    # Show login options if not authenticated
     if st.sidebar.button("User Login/Register"):
         st.session_state.current_page = "user_login_register"
     if st.sidebar.button("Admin Login"):
@@ -77,7 +96,7 @@ else:
 
 st.sidebar.markdown("---")
 
-# --- Pages ---
+# --- PAGE ROUTING LOGIC ---
 if st.session_state.current_page == "home":
     st.subheader("Welcome to Elhawey School Portal")
     st.write("Select an option below to get started.")
@@ -99,13 +118,14 @@ elif st.session_state.current_page == "user_login_register":
     with tab1:
         with st.form("user_login_form"):
             st.markdown("#### Login")
-            u, p = st.text_input("Username"), st.text_input("Password", type="password")
+            u, p = st.text_input("Username"), st.text_input("Password", type="password") # Hide password typing
             if st.form_submit_button("Login"):
                 try:
                     user = db.get_user_by_username(u)
+                    # Verify password hash against database
                     if user and get_hash(p) == user['password_hash']:
                         st.session_state.user_authenticated, st.session_state.logged_in_username = True, u
-                        st.session_state.current_page = "chatbot"
+                        st.session_state.current_page = "chatbot" # Redirect to chat
                         st.rerun()
                     else: st.error("Invalid credentials.")
                 except DatabaseError as e:
@@ -117,6 +137,7 @@ elif st.session_state.current_page == "user_login_register":
             ru, rp, rcp = st.text_input("New Username"), st.text_input("New Password", type="password"), st.text_input("Confirm Password", type="password")
             re = st.text_input("Email")
             if st.form_submit_button("Register"):
+                # Validate input and add user to database
                 try:
                     if ru and rp == rcp and not db.get_user_by_username(ru):
                         if db.add_user(ru, get_hash(rp), re):
@@ -180,7 +201,7 @@ if st.session_state.admin_authenticated and st.session_state.current_page == "ad
         except DatabaseError as e:
             st.error(f"Could not load analytics: {e}")
 
-    # --- Data Editor Section ---
+    # --- Data Editor Section (CRUD Operations) ---
     if "db_results" in st.session_state:
         edited = st.data_editor(st.session_state.db_results, key="editor", use_container_width=True, num_rows="dynamic", disabled=["student_id", "teacher_id"])
         
@@ -227,12 +248,13 @@ if st.session_state.current_page == "chatbot":
     with st.sidebar:
         st.subheader("Chat Configuration")
         delay = st.slider("Response Speed", 0.0, 3.0, 0.5)
+        # Allow users to upload images/text for the bot to analyze
         files = st.file_uploader("Attach files to your query", accept_multiple_files=True, key=st.session_state.get("uploader_key", 0))
         if st.button("🗑️ Clear Chat History", use_container_width=True): create_new_chat()
 
     summaries = bot.process_uploads(files) if files else []
     name = st.session_state.logged_in_username if st.session_state.user_authenticated else "Admin"
-    bot.render_chat_interface(name, delay, summaries)
+    bot.render_chat_interface(name, delay, summaries) # Display the chat UI
 
     if "messages" in st.session_state and st.session_state.messages:
         chat_text = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.messages])
