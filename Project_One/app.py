@@ -136,16 +136,16 @@ st.sidebar.markdown("---")
 
 # --- PAGE ROUTING LOGIC ---
 if st.session_state.current_page == "home":
-    st.subheader("Welcome to Elhawey School Portal")
-    st.write("Select an option below to get started.")
+    st.markdown("<h1 style='text-align: center; color: #1E88E5;'>Welcome to Elhawey School Portal 🏫</h1>", unsafe_allow_html=True)
+    st.markdown("<h4 style='text-align: center; color: gray;'>Your unified platform for intelligent school management</h4>", unsafe_allow_html=True)
+    st.divider()
     
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("User Access", use_container_width=True):
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        if st.button("🧑‍🎓 User Access", use_container_width=True, type="primary"):
             st.session_state.current_page = "user_login_register"
             st.rerun()
-    with col2:
-        if st.button("Administrator Access", use_container_width=True):
+        if st.button("🛡️ Administrator Access", use_container_width=True):
             st.session_state.current_page = "admin_login"
             st.rerun()
 
@@ -179,7 +179,7 @@ elif st.session_state.current_page == "user_login_register":
                 try:
                     if ru and rp == rcp and not db.get_user_by_username(ru):
                         if db.add_user(ru, get_hash(rp), re):
-                            st.success("Registered successfully! You can now log in.")
+                            st.toast("✅ Registered successfully! You can now log in.")
                     else: st.error("Passwords mismatch or username already exists.")
                 except DatabaseError as e:
                     st.error(f"Registration error: {e}")
@@ -190,59 +190,109 @@ elif st.session_state.current_page == "admin_login":
     if st.button("Login"):
         if get_hash(ap) == ADMIN_PASSWORD_HASH:
             st.session_state.admin_authenticated, st.session_state.current_page = True, "admin_dashboard"
+            st.toast("✅ Admin logged in successfully!")
             st.rerun()
         else:
             st.error("Incorrect administrator password.")
 
 # --- Admin Dashboard ---
 if st.session_state.admin_authenticated and st.session_state.current_page == "admin_dashboard":
-    st.sidebar.subheader("Admin Actions")
-    if st.sidebar.button("🎓 Fetch Students"):
-        try:
-            st.session_state.db_results, st.session_state.db_view = db.fetch_students(), "students"
-        except DatabaseError as e: st.error(e)
-    if st.sidebar.button("👨‍🏫 Fetch Teachers"):
-        try:
-            st.session_state.db_results, st.session_state.db_view = db.fetch_teachers(), "teachers"
-        except DatabaseError as e: st.error(e)
-
-    st.sidebar.markdown("---")
-    with st.sidebar.expander("➕ Add Record"):
-        mode = st.radio("Type", ["Student", "Teacher"])
-        with st.form("add_form", clear_on_submit=True):
-            fn, ln, email = st.text_input("First Name"), st.text_input("Last Name"), st.text_input("Email")
-            extra = st.number_input("Grade", 1, 12) if mode == "Student" else st.text_input("Subject")
-            if st.form_submit_button("Save"):
-                try:
-                    success = db.add_student(fn, ln, extra, email) if mode == "Student" else db.add_teacher(fn, ln, extra, email)
-                    if success: 
-                        st.sidebar.success("Record Added Successfully!")
-                        # Refresh view if current results match the added type
-                        if "db_view" in st.session_state and st.session_state.db_view.lower().startswith(mode.lower()):
-                            st.session_state.db_results = db.fetch_students() if mode == "Student" else db.fetch_teachers()
-                except DatabaseError as e:
-                    st.sidebar.error(e)
-
     st.subheader("Admin Dashboard")
     
+    tab_manage, tab_analytics, tab_attendance = st.tabs(["🗃️ Data Management", "📊 Analytics", "📋 Attendance"])
+
+    # --- Data Management Tab ---
+    with tab_manage:
+        col_btn1, col_btn2 = st.columns(2)
+        with col_btn1:
+            if st.button("🎓 Fetch Students", use_container_width=True):
+                try:
+                    st.session_state.db_results, st.session_state.db_view = db.fetch_students(), "students"
+                except DatabaseError as e: st.error(e)
+        with col_btn2:
+            if st.button("👨‍🏫 Fetch Teachers", use_container_width=True):
+                try:
+                    st.session_state.db_results, st.session_state.db_view = db.fetch_teachers(), "teachers"
+                except DatabaseError as e: st.error(e)
+
+        with st.expander("➕ Add New Record"):
+            mode = st.radio("Type", ["Student", "Teacher"], horizontal=True)
+            with st.form("add_form", clear_on_submit=True):
+                c_fn, c_ln = st.columns(2)
+                fn, ln = c_fn.text_input("First Name"), c_ln.text_input("Last Name")
+                email = st.text_input("Email")
+                extra = st.number_input("Grade", 1, 12) if mode == "Student" else st.text_input("Subject")
+                if st.form_submit_button("Save Record"):
+                    try:
+                        success = db.add_student(fn, ln, extra, email) if mode == "Student" else db.add_teacher(fn, ln, extra, email)
+                        if success: 
+                            st.toast(f"✅ {mode} Added Successfully!")
+                            if "db_view" in st.session_state and st.session_state.db_view.lower().startswith(mode.lower()):
+                                st.session_state.db_results = db.fetch_students() if mode == "Student" else db.fetch_teachers()
+                    except DatabaseError as e:
+                        st.error(e)
+
+        # Data Editor Section (CRUD Operations)
+        if "db_results" in st.session_state:
+            st.markdown(f"### Currently Editing: **{st.session_state.db_view.title()}**")
+            edited = st.data_editor(st.session_state.db_results, key="editor", use_container_width=True, num_rows="dynamic", disabled=["student_id", "teacher_id"])
+            
+            c1, c2 = st.columns(2)
+            if c1.button("💾 Sync Database", type="primary", use_container_width=True):
+                try:
+                    state, view = st.session_state["editor"], st.session_state["db_view"]
+                    results = st.session_state.db_results
+                    
+                    # Process edits
+                    for idx, changes in state["edited_rows"].items():
+                        row = {**results[idx], **changes}
+                        if view == "students": 
+                            db.update_student(row['student_id'], row['first_name'], row['last_name'], row['grade_level'], row['email'])
+                        else: 
+                            db.update_teacher(row['teacher_id'], row['first_name'], row['last_name'], row['subject'], row['email'])
+                            
+                    # Process additions
+                    for r in state["added_rows"]:
+                        if view == "students": 
+                            db.add_student(r.get('first_name',''), r.get('last_name',''), r.get('grade_level',1), r.get('email',''))
+                        else: 
+                            db.add_teacher(r.get('first_name',''), r.get('last_name',''), r.get('subject',''), r.get('email',''))
+                            
+                    # Process deletions
+                    for idx in state["deleted_rows"]:
+                        rid = results[idx]['student_id' if view == "students" else 'teacher_id']
+                        if view == "students": 
+                            db.delete_student(rid)
+                        else: 
+                            db.delete_teacher(rid)
+                    
+                    st.session_state.db_results = db.fetch_students() if view == "students" else db.fetch_teachers()
+                    st.toast("✅ Changes synced with the database.")
+                    st.rerun()
+                except DatabaseError as e:
+                    st.error(f"Sync failed: {e}")
+            if c2.button("🗑️ Clear View", use_container_width=True):
+                del st.session_state.db_results
+                st.rerun()
+
     # --- Statistics Section ---
-    with st.expander("📊 School Analytics", expanded=False):
+    with tab_analytics:
         try:
             stats = db.get_grade_distribution()
             if stats:
                 df_stats = pd.DataFrame(stats)
-                col1, col2 = st.columns([1, 2])
-                col1.metric("Total Students", df_stats['count'].sum())
-                col2.bar_chart(df_stats.set_index('grade_level'))
+                col_stat1, col_stat2 = st.columns([1, 2])
+                col_stat1.metric("Total Students", df_stats['count'].sum())
+                col_stat2.bar_chart(df_stats.set_index('grade_level'))
             else:
                 st.info("No student data available for analytics.")
         except DatabaseError as e:
             st.error(f"Could not load analytics: {e}")
 
     # --- Attendance Section ---
-    with st.expander("📋 Take Attendance", expanded=False):
+    with tab_attendance:
         att_date = st.date_input("Select Date", value=pd.to_datetime("today"), key="att_date_picker")
-        if st.button("Load Attendance Sheet"):
+        if st.button("Load Attendance Sheet", type="primary"):
             try:
                 # Fetch all students and current attendance for the selected day
                 students = db.fetch_students()
@@ -273,53 +323,11 @@ if st.session_state.admin_authenticated and st.session_state.current_page == "ad
                 use_container_width=True,
                 key="att_editor"
             )
-            if st.button("Submit Attendance"):
+            if st.button("Submit Attendance", type="primary"):
                 for row in edited_sheet:
                     db.record_attendance(row['student_id'], st.session_state.att_date_str, row['Status'])
-                st.success(f"Attendance for {st.session_state.att_date_str} saved!")
+                st.toast(f"✅ Attendance for {st.session_state.att_date_str} saved!")
                 del st.session_state.attendance_sheet
-
-    # --- Data Editor Section (CRUD Operations) ---
-    if "db_results" in st.session_state:
-        edited = st.data_editor(st.session_state.db_results, key="editor", use_container_width=True, num_rows="dynamic", disabled=["student_id", "teacher_id"])
-        
-        c1, c2 = st.columns(2)
-        if c1.button("💾 Sync Database", type="primary"):
-            try:
-                state, view = st.session_state["editor"], st.session_state["db_view"]
-                results = st.session_state.db_results
-                
-                # Process edits
-                for idx, changes in state["edited_rows"].items():
-                    row = {**results[idx], **changes}
-                    if view == "students": 
-                        db.update_student(row['student_id'], row['first_name'], row['last_name'], row['grade_level'], row['email'])
-                    else: 
-                        db.update_teacher(row['teacher_id'], row['first_name'], row['last_name'], row['subject'], row['email'])
-                        
-                # Process additions
-                for r in state["added_rows"]:
-                    if view == "students": 
-                        db.add_student(r.get('first_name',''), r.get('last_name',''), r.get('grade_level',1), r.get('email',''))
-                    else: 
-                        db.add_teacher(r.get('first_name',''), r.get('last_name',''), r.get('subject',''), r.get('email',''))
-                        
-                # Process deletions
-                for idx in state["deleted_rows"]:
-                    rid = results[idx]['student_id' if view == "students" else 'teacher_id']
-                    if view == "students": 
-                        db.delete_student(rid)
-                    else: 
-                        db.delete_teacher(rid)
-                
-                st.session_state.db_results = db.fetch_students() if view == "students" else db.fetch_teachers()
-                st.success("Changes synced with the database.")
-                st.rerun()
-            except DatabaseError as e:
-                st.error(f"Sync failed: {e}")
-        if c2.button("🗑️ Clear View"):
-            del st.session_state.db_results
-            st.rerun()
 
 # --- Chatbot Page ---
 if st.session_state.current_page == "chatbot":
