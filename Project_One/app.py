@@ -58,17 +58,15 @@ ADMIN_PASSWORD_HASH = st.secrets.get("ADMIN_PASSWORD_HASH", get_hash("admin"))
 st.title("🏫 Elhawey School Portal")
 
 # Initialize the Database connection
-db = SchoolDatabase(db_config)
-try:
-    db.setup_database() # Create tables if they don't exist
-except DatabaseError as e:
-    st.error(f"Database Initialization Error: {e}")
-
-# Initialize the AI Chatbot with the Gemini API Key
-api_key = st.secrets.get("GOOGLE_API_KEY")
-if not api_key:
-    st.sidebar.warning("⚠️ Google API Key not found. AI-powered fallback responses will be disabled.")
-bot = Chatbot(db, api_key=api_key) # Pass the retrieved API key to the Chatbot
+@st.cache_resource
+def init_db():
+    db_instance = SchoolDatabase(db_config)
+    try:
+        db_instance.setup_database() # Create tables if they don't exist
+    except DatabaseError as e:
+        st.error(f"Database Initialization Error: {e}")
+    return db_instance
+db = init_db()
 
 # Session State Init
 if "admin_authenticated" not in st.session_state:
@@ -79,6 +77,24 @@ if "logged_in_username" not in st.session_state:
     st.session_state.logged_in_username = None
 if "current_page" not in st.session_state:
     st.session_state.current_page = "home"
+
+# Determine which LLM provider to use (default to google if not specified)
+llm_provider = st.secrets.get("LLM_PROVIDER", "google").lower()
+llm_model = st.secrets.get("LLM_MODEL", "gemini-2.5-flash" if llm_provider == "google" else "gpt-4o")
+
+if llm_provider == "openai":
+    api_key = st.secrets.get("OPENAI_API_KEY")
+else:
+    api_key = st.secrets.get("GOOGLE_API_KEY")
+
+if not api_key:
+    st.sidebar.warning(f"⚠️ API Key for {llm_provider} not found. AI-powered fallback responses will be disabled.")
+
+@st.cache_resource
+def init_chatbot(_db, key, is_admin, provider, model):
+    return Chatbot(_db, api_key=key, is_admin=is_admin, provider=provider, model_name=model)
+
+bot = init_chatbot(db, api_key, st.session_state.admin_authenticated, llm_provider, llm_model)
 
 # Function to reset the chatbot conversation state
 def create_new_chat():

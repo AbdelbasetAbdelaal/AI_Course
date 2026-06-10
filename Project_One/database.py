@@ -127,7 +127,7 @@ class SchoolDatabase(DatabaseManager):
             cursor.execute(query, (f"%{subject}%",))
             return cursor.fetchall()
 
-    def fetch_student_by_name(self, first_name: str, last_name: str = "") -> RowResult:
+    def fetch_student_by_name(self, first_name: str, last_name: str = "") -> QueryResult:
         with self._get_cursor(dictionary=True) as cursor:
             query = "SELECT student_id, first_name, last_name, grade_level, email FROM students WHERE first_name = %s"
             params = [first_name]
@@ -135,7 +135,7 @@ class SchoolDatabase(DatabaseManager):
                 query += " AND last_name = %s"
                 params.append(last_name)
             cursor.execute(query, tuple(params))
-            return cursor.fetchone()
+            return cursor.fetchall()
 
     def update_student(self, student_id: int, fname: str, lname: str, grade: int, email: str) -> bool:
         with self._get_cursor() as cursor:

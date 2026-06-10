@@ -3,16 +3,18 @@ import time
 from PIL import Image
 from database import DatabaseError
 from langchain_core.tools import tool
-from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_classic.agents import AgentExecutor, create_tool_calling_agent
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import HumanMessage, AIMessage
 
 class Chatbot:
     """Orchestrator for the Chat UI using LangChain Agents and Tools."""
-    def __init__(self, db_manager, api_key=None):
+    def __init__(self, db_manager, api_key=None, is_admin=False, provider="google", model_name="gemini-1.5-flash"):
         self.db = db_manager
         self.api_key = api_key
+        self.is_admin = is_admin
+        self.provider = provider.lower()
+        self.model_name = model_name
         self.agent_executor = None
 
         if self.api_key:
@@ -38,9 +40,9 @@ class Chatbot:
                 return f"Database error: {e}"
 
         @tool
-        def get_system_status(is_admin: bool) -> str:
-            """Useful to get an overview of system health and total records. Require to know if the user is_admin."""
-            if not is_admin:
+        def get_system_status() -> str:
+            """Useful to get an overview of system health and total records."""
+            if not self.is_admin:
                 return "I'm sorry, only administrators can view the full system status."
             try:
                 s_count = len(self.db.fetch_students())
@@ -83,9 +85,9 @@ class Chatbot:
         def find_student_by_name(first_name: str, last_name: str = "") -> str:
             """Useful to find a specific student by their first and optionally last name."""
             try:
-                student = self.db.fetch_student_by_name(first_name, last_name)
-                if student:
-                    return f"I found student **{student['first_name']} {student['last_name']}**: Grade {student['grade_level']}, Email: {student['email']}."
+                students = self.db.fetch_student_by_name(first_name, last_name)
+                if students:
+                    return f"I found {len(students)} student(s):\n" + "\n".join([f"- **{s['first_name']} {s['last_name']}**: Grade {s['grade_level']}, Email: {s['email']}" for s in students])
                 return f"I couldn't find a student named '{first_name} {last_name}'."
             except DatabaseError as e:
                 return f"Database error: {e}"
@@ -112,11 +114,27 @@ class Chatbot:
             find_teacher_by_subject
         ]
 
-        llm = ChatGoogleGenerativeAI(
-            model="gemini-2.5-flash",
-            google_api_key=self.api_key,
-            temperature=0.7
-        )
+        if self.provider == "google":
+            from langchain_google_genai import ChatGoogleGenerativeAI
+            llm = ChatGoogleGenerativeAI(
+                model=self.model_name,
+                google_api_key=self.api_key,
+                temperature=0.7
+            )
+        elif self.provider == "openai":
+            from langchain_openai import ChatOpenAI
+            
+            clean_api_key = self.api_key.strip() if self.api_key else None
+            kwargs = {
+                "model": self.model_name,
+                "api_key": clean_api_key,
+                "temperature": 0.7
+            }
+            if clean_api_key and clean_api_key.startswith("sk-or-"):
+                kwargs["base_url"] = "https://openrouter.ai/api/v1"
+            llm = ChatOpenAI(**kwargs)
+        else:
+            raise ValueError(f"Unsupported LLM provider: {self.provider}")
 
         prompt = ChatPromptTemplate.from_messages([
             ("system", "You are the Elhawey School Assistant. Your role is to help students, parents, and staff. Be professional, polite, and encouraging. Use tools to fetch information from the database when needed. If the user greets you, greet them back. The user interacting with you is '{user_name}' and their admin status is '{is_admin}'."),
@@ -152,7 +170,7 @@ class Chatbot:
                 summaries.append(f"File '{uploaded_file.name}' (Type: {uploaded_file.type})")
         return summaries
 
-    def handle_query(self, user_input, file_summaries, delay, user_name, history=None):
+    def handle_query(self, user_input, file_summaries, user_name, history=None):
         query = user_input
         is_admin = str(user_name == "Admin")
         if file_summaries:
@@ -189,7 +207,10 @@ class Chatbot:
                     
                 return str(output)
             except Exception as e:
-                return f"I encountered an AI error: {str(e)}"
+                error_msg = str(e)
+                if "429" in error_msg or "RESOURCE_EXHAUSTED" in error_msg:
+                    return "⏳ I am currently experiencing high traffic (API Rate Limit). Please wait about a minute and try again."
+                return f"I encountered an AI error: {error_msg}"
         else:
             return "AI features are currently unavailable since no API key was provided."
 
@@ -215,7 +236,7 @@ class Chatbot:
             with st.chat_message("assistant"):
                 with st.spinner("Assistant is typing..."):
                     time.sleep(delay)
-                    response = self.handle_query(user_input, file_summaries, delay, user_name, history=st.session_state.messages)
+                    response = self.handle_query(user_input, file_summaries, user_name, history=st.session_state.messages)
 
                 st.write_stream(self.response_generator(response))
                 st.session_state.messages.append({"role": "assistant", "content": response})
