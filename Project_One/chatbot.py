@@ -1,153 +1,132 @@
 import streamlit as st
 import time
 from PIL import Image
-import re
 from database import DatabaseError
-from langchain_handler import LangChainAssistant
-
-class Intent:
-    """Base class for chatbot intents."""
-    pattern = None
-    def matches(self, query, has_files):
-        if self.pattern:
-            return bool(re.search(self.pattern, query, re.IGNORECASE))
-        return False
-    def resolve(self, query, db, is_admin, files, history=None, assistant=None):
-        return ""
-
-class WelcomeIntent(Intent):
-    pattern = r"\b(hi|hello|hey|welcome|greetings)\b"
-    def resolve(self, query, db, is_admin, files, history=None, assistant=None):
-        return "Hello! I am the Elhawey School Assistant. How can I help you today?"
-
-class HelpIntent(Intent):
-    pattern = r"\b(help|commands|what can you do|how to use)\b"
-    def resolve(self, query, db, is_admin, files, history=None, assistant=None):
-        cmds = [
-            "Search: 'Find student John Doe' or 'Who teaches Science?'",
-            "Lists: 'Show all teachers' or 'List students in grade 10'",
-            "Stats: 'How many students?' or 'System status' (Admin only)",
-            "Files: Upload a file and ask me to 'analyze files'."
-        ]
-        return "I can help you manage school records! Try these:\n" + "\n".join([f"- {c}" for c in cmds])
-
-class StudentCountIntent(Intent):
-    """Queries the database for total student numbers."""
-    pattern = r"how many.*students?"
-    def resolve(self, query, db, is_admin, files, history=None, assistant=None):
-        students = db.fetch_students()
-        return f"There are currently {len(students)} students enrolled in our system."
-
-class TeacherCountIntent(Intent):
-    pattern = r"how many.*teachers?"
-    def resolve(self, query, db, is_admin, files, history=None, assistant=None):
-        teachers = db.fetch_teachers()
-        return f"There are currently {len(teachers)} teachers registered in our system."
-
-class SystemStatusIntent(Intent):
-    """Provides an overview of system health (restricted to admins)."""
-    pattern = r"\b(status|system|stats|overview)\b"
-    def resolve(self, query, db, is_admin, files, history=None, assistant=None):
-        if not is_admin: return "I'm sorry, only administrators can view the full system status."
-        s_count = len(db.fetch_students())
-        t_count = len(db.fetch_teachers())
-        return f"**System Overview:**\n- Total Students: {s_count}\n- Total Teachers: {t_count}\n- Database Connection: Active"
-
-class TeacherListIntent(Intent):
-    pattern = r"(list|show|who are).*teachers?"
-    def resolve(self, query, db, is_admin, files, history=None, assistant=None):
-        teachers = db.fetch_teachers()
-        if not teachers: return "There are no teachers listed in the system."
-        return "Here is a list of our current teachers:\n" + "\n".join([f"- {t['first_name']} {t['last_name']} ({t['subject']})" for t in teachers])
-
-class FileUploadIntent(Intent):
-    """Triggers when a user mentions files while having active uploads."""
-    pattern = r"(file|upload|analyze)"
-    def matches(self, query, has_files):
-        return has_files and super().matches(query, has_files)
-    def resolve(self, query, db, is_admin, files, history=None, assistant=None):
-        return f"I've acknowledged the {len(files)} file(s) you uploaded: " + ", ".join(files) + ". How would you like me to process them?"
-
-class StudentListIntent(Intent):
-    pattern = r"(list|show|who are).*students?"
-    def resolve(self, query, db, is_admin, files, history=None, assistant=None):
-        students = db.fetch_students()
-        if not students: return "There are no students listed in the system."
-        return "Here is a list of our current students:\n" + "\n".join([f"- {s['first_name']} {s['last_name']} (Grade: {s['grade_level']})" for s in students])
-
-class StudentGradeIntent(Intent):
-    pattern = r"(students|who).*grade\s+(\d+)"
-    def resolve(self, query, db, is_admin, files, history=None, assistant=None):
-        match = re.search(r"grade\s+(\d+)", query)
-        if not match: return "Please specify the grade number."
-        
-        target_grade = int(match.group(1))
-        students = [s for s in db.fetch_students() if s['grade_level'] == target_grade]
-        
-        if not students: return f"I couldn't find any students enrolled in grade {target_grade}."
-        return f"Found {len(students)} students in grade {target_grade}:\n" + "\n".join([f"- {s['first_name']} {s['last_name']}" for s in students])
-
-class SearchStudentByNameIntent(Intent):
-    """Uses AI to extract names from a sentence and then queries the database."""
-    pattern = r"(find|search|who is|tell me about).*student"
-    def resolve(self, query, db, is_admin, files, history=None, assistant=None):
-        if not assistant: return "AI features are disabled. Please use a more specific command like 'Find student John Doe'."
-        
-        params = assistant.extract_entities(query)
-        fname, lname = params.first_name, params.last_name
-        
-        if not fname: return "Which student are you looking for?"
-        
-        student = db.fetch_student_by_name(fname, lname)
-        if student:
-            return f"I found student **{student['first_name']} {student['last_name']}**: Grade {student['grade_level']}, Email: {student['email']}."
-        return f"I couldn't find a student named '{fname} {lname or ''}'."
-
-class SearchTeacherBySubjectIntent(Intent):
-    pattern = r"(find|search|who|teaches|teacher for).*(teacher|subject|class)"
-    def resolve(self, query, db, is_admin, files, history=None, assistant=None):
-        if not assistant: return "AI features are disabled. Try 'Show all teachers'."
-        
-        params = assistant.extract_entities(query)
-        subject = params.subject
-
-        if not subject: return "What subject are you looking for?"
-        teachers = db.fetch_teachers_by_subject(subject)
-        if not teachers: return f"I couldn't find any teachers for '{subject}'."
-        
-        count_prefix = "The teacher is" if len(teachers) == 1 else f"I found the following {len(teachers)} teachers:"
-        return f"{count_prefix}\n" + "\n".join([f"- {t['first_name']} {t['last_name']} (Subject: {t['subject']})" for t in teachers])
-
-class FallbackIntent(Intent):
-    def matches(self, query, has_files): return True
-    def resolve(self, query, db, is_admin, files, history=None, assistant=None):
-        if assistant:
-            try:
-                return assistant.ask(query, history)
-            except Exception as e:
-                return f"I encountered an AI error: {str(e)}"
-        return "AI features are currently unavailable. Try asking for 'help' to see local commands!"
+from langchain_core.tools import tool
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_classic.agents import AgentExecutor, create_tool_calling_agent
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.messages import HumanMessage, AIMessage
 
 class Chatbot:
-    """Orchestrator for the Chat UI and the Intent processing engine."""
+    """Orchestrator for the Chat UI using LangChain Agents and Tools."""
     def __init__(self, db_manager, api_key=None):
         self.db = db_manager
         self.api_key = api_key
-        self.assistant = LangChainAssistant(api_key) if api_key else None
-        self.intents = [
-            WelcomeIntent(),
-            HelpIntent(),
-            StudentCountIntent(),
-            TeacherCountIntent(),
-            SystemStatusIntent(),
-            TeacherListIntent(), 
-            FileUploadIntent(),
-            StudentListIntent(),
-            StudentGradeIntent(),
-            SearchStudentByNameIntent(),
-            SearchTeacherBySubjectIntent(),
-            FallbackIntent() # Must be last
+        self.agent_executor = None
+
+        if self.api_key:
+            self._setup_agent()
+
+    def _setup_agent(self):
+        @tool
+        def get_student_count() -> str:
+            """Useful to get the total number of students in the school."""
+            try:
+                students = self.db.fetch_students()
+                return f"There are currently {len(students)} students enrolled in our system."
+            except DatabaseError as e:
+                return f"Database error: {e}"
+
+        @tool
+        def get_teacher_count() -> str:
+            """Useful to get the total number of teachers in the school."""
+            try:
+                teachers = self.db.fetch_teachers()
+                return f"There are currently {len(teachers)} teachers registered in our system."
+            except DatabaseError as e:
+                return f"Database error: {e}"
+
+        @tool
+        def get_system_status(is_admin: bool) -> str:
+            """Useful to get an overview of system health and total records. Require to know if the user is_admin."""
+            if not is_admin:
+                return "I'm sorry, only administrators can view the full system status."
+            try:
+                s_count = len(self.db.fetch_students())
+                t_count = len(self.db.fetch_teachers())
+                return f"**System Overview:**\n- Total Students: {s_count}\n- Total Teachers: {t_count}\n- Database Connection: Active"
+            except DatabaseError as e:
+                return f"Database error: {e}"
+
+        @tool
+        def list_teachers() -> str:
+            """Useful to list all teachers in the school."""
+            try:
+                teachers = self.db.fetch_teachers()
+                if not teachers: return "There are no teachers listed in the system."
+                return "Here is a list of our current teachers:\n" + "\n".join([f"- {t['first_name']} {t['last_name']} ({t['subject']})" for t in teachers])
+            except DatabaseError as e:
+                return f"Database error: {e}"
+
+        @tool
+        def list_students() -> str:
+            """Useful to list all students in the school."""
+            try:
+                students = self.db.fetch_students()
+                if not students: return "There are no students listed in the system."
+                return "Here is a list of our current students:\n" + "\n".join([f"- {s['first_name']} {s['last_name']} (Grade: {s['grade_level']})" for s in students])
+            except DatabaseError as e:
+                return f"Database error: {e}"
+
+        @tool
+        def find_students_by_grade(grade: int) -> str:
+            """Useful to find students in a specific grade level."""
+            try:
+                students = [s for s in self.db.fetch_students() if s['grade_level'] == grade]
+                if not students: return f"I couldn't find any students enrolled in grade {grade}."
+                return f"Found {len(students)} students in grade {grade}:\n" + "\n".join([f"- {s['first_name']} {s['last_name']}" for s in students])
+            except DatabaseError as e:
+                return f"Database error: {e}"
+
+        @tool
+        def find_student_by_name(first_name: str, last_name: str = "") -> str:
+            """Useful to find a specific student by their first and optionally last name."""
+            try:
+                student = self.db.fetch_student_by_name(first_name, last_name)
+                if student:
+                    return f"I found student **{student['first_name']} {student['last_name']}**: Grade {student['grade_level']}, Email: {student['email']}."
+                return f"I couldn't find a student named '{first_name} {last_name}'."
+            except DatabaseError as e:
+                return f"Database error: {e}"
+
+        @tool
+        def find_teacher_by_subject(subject: str) -> str:
+            """Useful to find teachers who teach a specific subject."""
+            try:
+                teachers = self.db.fetch_teachers_by_subject(subject)
+                if not teachers: return f"I couldn't find any teachers for '{subject}'."
+                count_prefix = "The teacher is" if len(teachers) == 1 else f"I found the following {len(teachers)} teachers:"
+                return f"{count_prefix}\n" + "\n".join([f"- {t['first_name']} {t['last_name']} (Subject: {t['subject']})" for t in teachers])
+            except DatabaseError as e:
+                return f"Database error: {e}"
+
+        tools = [
+            get_student_count,
+            get_teacher_count,
+            get_system_status,
+            list_teachers,
+            list_students,
+            find_students_by_grade,
+            find_student_by_name,
+            find_teacher_by_subject
         ]
+
+        llm = ChatGoogleGenerativeAI(
+            model="gemini-2.5-flash",
+            google_api_key=self.api_key,
+            temperature=0.7
+        )
+
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", "You are the Elhawey School Assistant. Your role is to help students, parents, and staff. Be professional, polite, and encouraging. Use tools to fetch information from the database when needed. If the user greets you, greet them back. The user interacting with you is '{user_name}' and their admin status is '{is_admin}'."),
+            MessagesPlaceholder(variable_name="chat_history"),
+            ("user", "{input}"),
+            MessagesPlaceholder(variable_name="agent_scratchpad"),
+        ])
+
+        agent = create_tool_calling_agent(llm, tools, prompt)
+        self.agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True)
 
     def response_generator(self, text):
         """Creates a typewriter effect for chatbot responses."""
@@ -174,16 +153,45 @@ class Chatbot:
         return summaries
 
     def handle_query(self, user_input, file_summaries, delay, user_name, history=None):
-        """Iterates through intents to find the first one that matches the user's input."""
-        query = user_input.lower()
-        is_admin = (user_name == "Admin")
+        query = user_input
+        is_admin = str(user_name == "Admin")
+        if file_summaries:
+            query = f"I've uploaded files: {', '.join(file_summaries)}. " + query
+             
+        if self.agent_executor:
+            chat_history = []
+            if history:
+                 for msg in history[:-1]:
+                     role_class = HumanMessage if msg["role"] == "user" else AIMessage
+                     chat_history.append(role_class(content=msg["content"]))
 
-        try:
-            for intent in self.intents:
-                if intent.matches(query, bool(file_summaries)):
-                    return intent.resolve(query, self.db, is_admin, file_summaries, history=history, assistant=self.assistant)
-        except DatabaseError as e:
-            return f"I'm sorry, I'm having trouble accessing the school database right now. Details: {e}"
+            try:
+                response = self.agent_executor.invoke({
+                    "input": query,
+                    "chat_history": chat_history,
+                    "user_name": user_name,
+                    "is_admin": is_admin
+                })
+                
+                output = response["output"]
+                
+                # Extract text if LangChain returns structured content blocks
+                if isinstance(output, list):
+                    extracted = []
+                    for item in output:
+                        if isinstance(item, dict) and "text" in item:
+                            extracted.append(item["text"])
+                        else:
+                            extracted.append(str(item))
+                    return " ".join(extracted)
+                elif isinstance(output, dict) and "text" in output:
+                    return output["text"]
+                    
+                return str(output)
+            except Exception as e:
+                return f"I encountered an AI error: {str(e)}"
+        else:
+            return "AI features are currently unavailable since no API key was provided."
 
     def render_chat_interface(self, user_name, delay, file_summaries):
         """Handles the Streamlit chat UI components and message state."""

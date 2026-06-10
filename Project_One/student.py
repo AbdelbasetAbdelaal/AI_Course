@@ -2,12 +2,10 @@
 from dataclasses import dataclass, asdict
 
 @dataclass
-class Student:
-    """Schema for a Student record matching the database structure."""
-    student_id: int
+class Person:
+    """Base class for common person attributes."""
     first_name: str
     last_name: str
-    grade_level: int
     email: str
 
     @property
@@ -18,22 +16,15 @@ class Student:
     def to_dict(self) -> dict:
         """Converts the instance to a dictionary."""
         return asdict(self)
-
 
 @dataclass
-class Teacher:
+class Student(Person):
+    """Schema for a Student record matching the database structure."""
+    student_id: int
+    grade_level: int
+
+@dataclass
+class Teacher(Person):
     """Schema for a Teacher record matching the database structure."""
     teacher_id: int
-    first_name: str
-    last_name: str
     subject: str
-    email: str
-
-    @property
-    def full_name(self) -> str:
-        """Returns the combined first and last name."""
-        return f"{self.first_name} {self.last_name}"
-
-    def to_dict(self) -> dict:
-        """Converts the instance to a dictionary."""
-        return asdict(self)

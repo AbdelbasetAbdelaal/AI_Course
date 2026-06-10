@@ -3,6 +3,7 @@ import streamlit as st
 import hashlib
 import os
 from PIL import Image
+from fpdf import FPDF
 import pandas as pd
 from database import SchoolDatabase, DatabaseError
 from chatbot import Chatbot
@@ -27,8 +28,29 @@ if not db_config:
 
 
 # Helper function to hash passwords using SHA-256 for security
+# Enhancement: Use a salt to prevent rainbow table attacks
 def get_hash(text: str) -> str:
-    return hashlib.sha256(text.encode()).hexdigest()
+    # This is a simple salt implementation for demonstration.
+    # Ideally, store a unique salt per user in the DB.
+    salt = "elhawey_secure_salt_2024"
+    return hashlib.sha256((text + salt).encode()).hexdigest()
+
+# Helper function to generate a PDF transcript of the chat session
+def generate_pdf_transcript(messages):
+    """Converts the session message list into a formatted PDF byte stream."""
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Helvetica", "B", 16)
+    pdf.cell(0, 10, "Elhawey School Portal - Chat Transcript", ln=True, align="C")
+    pdf.ln(10)
+    for m in messages:
+        role = "Assistant" if m["role"] == "assistant" else "User"
+        pdf.set_font("Helvetica", "B", 12)
+        pdf.cell(0, 10, f"{role}:", ln=True)
+        pdf.set_font("Helvetica", size=10)
+        pdf.multi_cell(0, 10, m["content"].encode('latin-1', 'replace').decode('latin-1')) # Ensure content is latin-1 compatible
+        pdf.ln(5)
+    return bytes(pdf.output())
 
 # Load admin password from secrets or default to 'admin' (hashed)
 ADMIN_PASSWORD_HASH = st.secrets.get("ADMIN_PASSWORD_HASH", get_hash("admin"))
@@ -201,6 +223,46 @@ if st.session_state.admin_authenticated and st.session_state.current_page == "ad
         except DatabaseError as e:
             st.error(f"Could not load analytics: {e}")
 
+    # --- Attendance Section ---
+    with st.expander("📋 Take Attendance", expanded=False):
+        att_date = st.date_input("Select Date", value=pd.to_datetime("today"), key="att_date_picker")
+        if st.button("Load Attendance Sheet"):
+            try:
+                # Fetch all students and current attendance for the selected day
+                students = db.fetch_students()
+                existing = {a['student_id']: a['status'] for a in db.fetch_attendance_by_date(att_date.strftime("%Y-%m-%d"))}
+                
+                # Build a display list: default to 'Present' if no record exists
+                attendance_data = []
+                for s in students:
+                    attendance_data.append({
+                        "student_id": s['student_id'],
+                        "Name": f"{s['first_name']} {s['last_name']}",
+                        "Status": existing.get(s['student_id'], "Present")
+                    })
+                st.session_state.attendance_sheet = attendance_data
+                st.session_state.att_date_str = att_date.strftime("%Y-%m-%d")
+            except DatabaseError as e:
+                st.error(f"Error loading attendance sheet: {e}")
+
+        if "attendance_sheet" in st.session_state:
+            st.info(f"Marking attendance for: {st.session_state.att_date_str}")
+            edited_sheet = st.data_editor(
+                st.session_state.attendance_sheet,
+                column_config={
+                    "Status": st.column_config.SelectboxColumn("Status", options=["Present", "Absent", "Late"], required=True),
+                    "student_id": None, # Hide internal ID
+                },
+                disabled=["Name"],
+                use_container_width=True,
+                key="att_editor"
+            )
+            if st.button("Submit Attendance"):
+                for row in edited_sheet:
+                    db.record_attendance(row['student_id'], st.session_state.att_date_str, row['Status'])
+                st.success(f"Attendance for {st.session_state.att_date_str} saved!")
+                del st.session_state.attendance_sheet
+
     # --- Data Editor Section (CRUD Operations) ---
     if "db_results" in st.session_state:
         edited = st.data_editor(st.session_state.db_results, key="editor", use_container_width=True, num_rows="dynamic", disabled=["student_id", "teacher_id"])
@@ -258,4 +320,7 @@ if st.session_state.current_page == "chatbot":
 
     if "messages" in st.session_state and st.session_state.messages:
         chat_text = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.messages])
-        st.sidebar.download_button("Download Chat", chat_text, file_name="chat.txt")
+        st.sidebar.download_button("📥 Download Text", chat_text, file_name="chat.txt")
+        
+        pdf_bytes = generate_pdf_transcript(st.session_state.messages)
+        st.sidebar.download_button("📄 Download PDF Transcript", pdf_bytes, file_name="transcript.pdf", mime="application/pdf")

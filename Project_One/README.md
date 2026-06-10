@@ -7,6 +7,7 @@ A comprehensive Streamlit application that integrates an interactive chatbot wit
 - **[Streamlit](https://streamlit.io/):** Used for building the web-based interactive user interface.
 - **[MySQL Connector](https://dev.mysql.com/doc/connector-python/en/):** Handles all communications between the Python script and the MySQL database.
 - **[Pillow (PIL)](https://python-pillow.org/):** Used for image processing and rendering uploaded images in the sidebar.
+- **[LangChain](https://www.langchain.com/):** Powers the AI chatbot, including agent creation and tool usage.
 - **[Hashlib](https://docs.python.org/3/library/hashlib.html):** Provides secure SHA-256 hashing for Admin authentication.
 - **[JSON](https://docs.python.org/3/library/json.html):** Manages local user registration and session persistence in `users.json`.
 - **[ABC (Abstract Base Classes)](https://docs.python.org/3/library/abc.html):** Used to enforce OOP design patterns (Abstraction and Polymorphism).
