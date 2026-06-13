@@ -7,6 +7,8 @@ from fpdf import FPDF
 import pandas as pd
 from database import SchoolDatabase, DatabaseError
 from chatbot import Chatbot
+from langchain_core.globals import set_llm_cache
+from langchain_core.caches import InMemoryCache
 
 # Configure the main Streamlit page settings
 st.set_page_config(page_title="Elhawey School Portal", layout="wide", page_icon="🏫")
@@ -51,6 +53,12 @@ def generate_pdf_transcript(messages):
         pdf.multi_cell(0, 10, m["content"].encode('latin-1', 'replace').decode('latin-1')) # Ensure content is latin-1 compatible
         pdf.ln(5)
     return bytes(pdf.output())
+
+# Initialize LLM Cache to save tokens on repeated questions
+@st.cache_resource
+def init_llm_cache():
+    set_llm_cache(InMemoryCache())
+init_llm_cache()
 
 # Load admin password from secrets or default to 'admin' (hashed)
 ADMIN_PASSWORD_HASH = st.secrets.get("ADMIN_PASSWORD_HASH", get_hash("admin"))
