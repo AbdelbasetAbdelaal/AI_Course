@@ -16,9 +16,32 @@ class Chatbot:
         self.provider = provider.lower()
         self.model_name = model_name
         self.agent_executor = None
+        self.vectorstore = None
 
         if self.api_key:
+            self._init_vectorstore()
             self._setup_agent()
+
+    def _init_vectorstore(self):
+        """Initializes the connection to an existing Pinecone index."""
+        import os
+        pinecone_api_key = st.secrets.get("PINECONE_API_KEY") or os.getenv("PINECONE_API_KEY")
+        index_name = st.secrets.get("PINECONE_INDEX_NAME") or os.getenv("PINECONE_INDEX_NAME", "elhawey-index")
+        
+        if pinecone_api_key:
+            os.environ["PINECONE_API_KEY"] = pinecone_api_key
+            try:
+                from langchain_pinecone import PineconeVectorStore
+                if self.provider == "google":
+                    from langchain_google_genai import GoogleGenerativeAIEmbeddings
+                    embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001", google_api_key=self.api_key)
+                else:
+                    from langchain_openai import OpenAIEmbeddings
+                    embeddings = OpenAIEmbeddings(api_key=self.api_key)
+                
+                self.vectorstore = PineconeVectorStore(index_name=index_name, embedding=embeddings)
+            except Exception:
+                pass
 
     def _setup_agent(self):
         @tool
@@ -103,6 +126,16 @@ class Chatbot:
             except DatabaseError as e:
                 return f"Database error: {e}"
 
+        @tool
+        def search_uploaded_documents(search_query: str) -> str:
+            """Useful to search through uploaded documents, files, and text for specific information using semantic search."""
+            if not getattr(self, 'vectorstore', None):
+                return "No documents have been uploaded or processed yet."
+            docs = self.vectorstore.similarity_search(search_query, k=3)
+            if not docs:
+                return "No relevant information found in the uploaded documents."
+            return "\n\n".join([f"Excerpt: {doc.page_content}" for doc in docs])
+
         tools = [
             get_student_count,
             get_teacher_count,
@@ -111,7 +144,8 @@ class Chatbot:
             list_students,
             find_students_by_grade,
             find_student_by_name,
-            find_teacher_by_subject
+            find_teacher_by_subject,
+            search_uploaded_documents
         ]
 
         if self.provider == "google":
@@ -155,10 +189,49 @@ class Chatbot:
     def process_uploads(self, uploaded_files):
         """Parses uploaded file metadata and displays images in the sidebar."""
         summaries = []
+        texts_to_embed = []
         for uploaded_file in uploaded_files:
             if uploaded_file.type == "text/plain":
                 content = uploaded_file.read().decode("utf-8")
                 summaries.append(f"Text file '{uploaded_file.name}' ({len(content)} chars)")
+                texts_to_embed.append(content)
+            elif uploaded_file.type == "application/pdf":
+                try:
+                    import fitz  # PyMuPDF
+                    
+                    doc = fitz.open(stream=uploaded_file.read(), filetype="pdf")
+                    content = ""
+                    for page in doc:
+                        content += page.get_text("text") + "\n"
+                        
+                    summaries.append(f"PDF file '{uploaded_file.name}' ({len(content)} chars)")
+                    if content.strip():
+                        texts_to_embed.append(content)
+                    else:
+                        try:
+                            import pytesseract
+                            summaries.append(f"🔄 No readable text found in '{uploaded_file.name}'. Attempting OCR...")
+                            ocr_content = ""
+                            for page in doc:
+                                pix = page.get_pixmap()
+                                mode = "RGBA" if pix.alpha else "RGB"
+                                img = Image.frombytes(mode, [pix.width, pix.height], pix.samples)
+                                ocr_content += pytesseract.image_to_string(img) + "\n"
+                            
+                            if ocr_content.strip():
+                                texts_to_embed.append(ocr_content)
+                                summaries.append(f"✅ OCR successful for '{uploaded_file.name}' ({len(ocr_content)} chars extracted).")
+                            else:
+                                summaries.append(f"⚠️ OCR failed to extract text from '{uploaded_file.name}'.")
+                        except ImportError:
+                            summaries.append(f"⚠️ The PDF '{uploaded_file.name}' is scanned. Missing pytesseract for OCR. Try: pip install pytesseract")
+                        except Exception as e:
+                            summaries.append(f"⚠️ OCR Error for '{uploaded_file.name}': {e}")
+                except ImportError:
+                    summaries.append(f"⚠️ Missing PyMuPDF. Try: pip install pymupdf")
+                    st.sidebar.error("Please install PyMuPDF to process PDF files.")
+                except Exception as e:
+                    st.sidebar.error(f"Error reading PDF {uploaded_file.name}: {e}")
             elif uploaded_file.type in ["image/png", "image/jpeg"]:
                 try:
                     img = Image.open(uploaded_file)
@@ -168,6 +241,41 @@ class Chatbot:
                     st.sidebar.error(f"Error loading {uploaded_file.name}: {e}")
             else:
                 summaries.append(f"File '{uploaded_file.name}' (Type: {uploaded_file.type})")
+                
+        # Advanced RAG: Chunk and embed uploaded text documents
+        if texts_to_embed:
+            try:
+                import os
+                from langchain.text_splitter import RecursiveCharacterTextSplitter
+                from langchain_pinecone import PineconeVectorStore
+                
+                if self.provider == "google":
+                    from langchain_google_genai import GoogleGenerativeAIEmbeddings
+                    embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001", google_api_key=self.api_key)
+                else:
+                    from langchain_openai import OpenAIEmbeddings
+                    embeddings = OpenAIEmbeddings(api_key=self.api_key)
+                    
+                splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+                docs = splitter.create_documents(texts_to_embed)
+                
+                pinecone_api_key = st.secrets.get("PINECONE_API_KEY") or os.getenv("PINECONE_API_KEY")
+                index_name = st.secrets.get("PINECONE_INDEX_NAME") or os.getenv("PINECONE_INDEX_NAME", "elhawey-index")
+                
+                if not pinecone_api_key:
+                    summaries.append("⚠️ Pinecone API key missing. Please configure PINECONE_API_KEY.")
+                else:
+                    os.environ["PINECONE_API_KEY"] = pinecone_api_key
+                    self.vectorstore = PineconeVectorStore.from_documents(docs, embeddings, index_name=index_name)
+                    summaries.append(f"✅ Advanced RAG enabled: Documents chunked and stored in Pinecone DB (index: {index_name}).")
+            except ImportError:
+                summaries.append("⚠️ Missing packages for Pinecone. Try: pip install langchain-pinecone pinecone-client")
+            except Exception as e:
+                summaries.append(f"⚠️ Document processing failed: {e}")
+                st.sidebar.error(f"Error creating Vector DB: {e}")
+        elif uploaded_files and not texts_to_embed:
+            summaries.append("⚠️ No valid text could be extracted from the uploaded files to create a searchable database.")
+                
         return summaries
 
     def handle_query(self, user_input, file_summaries, user_name, history=None):
