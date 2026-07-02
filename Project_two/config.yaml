@@ -1,0 +1,28 @@
+# Conversational RAG Configuration
+
+embedding:
+  model_name: "sentence-transformers/all-MiniLM-L6-v2"
+  device: "cpu"
+
+vector_store:
+  persist_directory: ".chroma/student-rag"
+  collection_name: "pdf_qa_collection"
+
+text_splitter:
+  chunk_size: 1000
+  chunk_overlap: 200
+
+retriever:
+  k: 4
+  search_type: "similarity" # can be 'similarity' or 'mmr'
+
+llm:
+  groq:
+    model_name: "llama-3.3-70b-versatile"
+    temperature: 0.0
+  openai:
+    model_name: "gpt-4o-mini"
+    temperature: 0.0
+  gemini:
+    model_name: "gemini-1.5-flash"
+    temperature: 0.0
