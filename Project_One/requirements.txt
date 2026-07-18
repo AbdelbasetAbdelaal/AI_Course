@@ -1,0 +1,8 @@
+streamlit
+mysql-connector-python
+Pillow
+fpdf2
+pandas
+langchain
+langchain-google-genai
+langchain-classic

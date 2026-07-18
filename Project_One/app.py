@@ -71,6 +71,10 @@ def init_db():
     db_instance = SchoolDatabase(db_config)
     try:
         db_instance.setup_database() # Create tables if they don't exist
+        # Automatically migrate legacy users if JSON database exists
+        migrated_count = db_instance.migrate_users()
+        if migrated_count > 0:
+            st.toast(f"ℹ️ Migrated {migrated_count} legacy users from users.json.")
     except DatabaseError as e:
         st.error(f"Database Initialization Error: {e}")
     return db_instance
@@ -231,14 +235,25 @@ if st.session_state.admin_authenticated and st.session_state.current_page == "ad
                 email = st.text_input("Email")
                 extra = st.number_input("Grade", 1, 12) if mode == "Student" else st.text_input("Subject")
                 if st.form_submit_button("Save Record"):
-                    try:
-                        success = db.add_student(fn, ln, extra, email) if mode == "Student" else db.add_teacher(fn, ln, extra, email)
-                        if success: 
-                            st.toast(f"✅ {mode} Added Successfully!")
-                            if "db_view" in st.session_state and st.session_state.db_view.lower().startswith(mode.lower()):
-                                st.session_state.db_results = db.fetch_students() if mode == "Student" else db.fetch_teachers()
-                    except DatabaseError as e:
-                        st.error(e)
+                    fn_clean = fn.strip()
+                    ln_clean = ln.strip()
+                    email_clean = email.strip()
+                    
+                    if not fn_clean or not ln_clean:
+                        st.error("⚠️ First Name and Last Name are required.")
+                    elif email_clean and ("@" not in email_clean or "." not in email_clean.split("@")[-1]):
+                        st.error("⚠️ Please enter a valid email address.")
+                    elif mode == "Teacher" and not extra.strip():
+                        st.error("⚠️ Subject is required for Teachers.")
+                    else:
+                        try:
+                            success = db.add_student(fn_clean, ln_clean, extra, email_clean) if mode == "Student" else db.add_teacher(fn_clean, ln_clean, extra.strip(), email_clean)
+                            if success: 
+                                st.toast(f"✅ {mode} Added Successfully!")
+                                if "db_view" in st.session_state and st.session_state.db_view.lower().startswith(mode.lower()):
+                                    st.session_state.db_results = db.fetch_students() if mode == "Student" else db.fetch_teachers()
+                        except DatabaseError as e:
+                            st.error(e)
 
         # Data Editor Section (CRUD Operations)
         if "db_results" in st.session_state:

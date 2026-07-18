@@ -7,6 +7,7 @@ from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_chroma import Chroma
+from langchain_core.documents import Document
 
 def load_config(config_path: str = "config.yaml") -> dict:
     """
@@ -101,6 +102,28 @@ class DocumentIngester:
                 loader = PyPDFLoader(temp_file_path)
                 docs = loader.load()
                 
+                # Check if this PDF file contains actual readable text
+                has_text = any(doc.page_content.strip() for doc in docs)
+                if not has_text:
+                    try:
+                        from rapidocr_pdf import RapidOCRPDF
+                        pdf_extractor = RapidOCRPDF()
+                        ocr_results = pdf_extractor(temp_file_path)
+                        
+                        ocr_docs = []
+                        if ocr_results:
+                            for page_num, text, confidence in ocr_results:
+                                if text and text.strip():
+                                    ocr_docs.append(Document(
+                                        page_content=text,
+                                        metadata={"source": uploaded_file.name, "page": page_num}
+                                    ))
+                        if ocr_docs:
+                            docs = ocr_docs
+                    except Exception:
+                        # Fallback or log if rapidocr fails
+                        pass
+                
                 # Inject the original filename as metadata source (replaces the temp file path)
                 for doc in docs:
                     doc.metadata["source"] = uploaded_file.name
@@ -111,6 +134,15 @@ class DocumentIngester:
             if not all_documents:
                 raise ValueError("No text content could be extracted from the uploaded PDF(s).")
             
+            # Check if any loaded document contains actual readable text
+            has_text = any(doc.page_content.strip() for doc in all_documents)
+            if not has_text:
+                raise ValueError(
+                    "No readable text content could be extracted from the uploaded PDF(s). "
+                    "The PDF(s) might be empty, password-protected, or scanned images without selectable text. "
+                    "Please ensure rapidocr-pdf is installed if trying to parse scanned PDFs."
+                )
+            
             # Initialize the text splitter (splits text on paragraphs, sentences, and words recursively)
             text_splitter = RecursiveCharacterTextSplitter(
                 chunk_size=self.chunk_size,
@@ -118,6 +150,13 @@ class DocumentIngester:
                 length_function=len
             )
             chunks = text_splitter.split_documents(all_documents)
+            
+            # Filter out empty or whitespace-only chunks to prevent Chroma ingestion errors
+            chunks = [chunk for chunk in chunks if chunk.page_content.strip()]
+            if not chunks:
+                raise ValueError(
+                    "No valid text chunks could be generated from the uploaded PDF(s)."
+                )
             
             # Initialize or open the Chroma collection and index the documents
             vector_store = Chroma(

@@ -55,7 +55,7 @@ A comprehensive Streamlit application that integrates an interactive chatbot wit
        email VARCHAR(100)
    );
    ```
-4. Run the app: `streamlit run Project_One.py`
+4. Run the app: `streamlit run app.py`
 5. Default Admin Password: `admin`
 
 ## 🧪 How to Test the Chatbot

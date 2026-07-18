@@ -244,44 +244,99 @@ with status_col2:
 
 st.markdown("---")
 
-# Render conversational interface or display active validation messages
-if error_msg:
-    st.info(error_msg)
-else:
-    # 1. Fetch and render conversation history from the active engine
-    chat_history = chatbot.history(session_id)
-    for role, message in chat_history:
-        with st.chat_message(role):
-            st.markdown(message)
+# Render interface split by Tabs
+tab1, tab2 = st.tabs(["💬 Chat", "🗂️ Chroma DB Explorer"])
+
+with tab1:
+    # Render conversational interface or display active validation messages
+    if error_msg:
+        st.info(error_msg)
+    else:
+        # 1. Fetch and render conversation history from the active engine
+        chat_history = chatbot.history(session_id)
+        for role, message in chat_history:
+            with st.chat_message(role):
+                st.markdown(message)
+                
+        # 2. Render input block for new user queries
+        if prompt := st.chat_input("Ask a question about the uploaded PDFs..."):
+            # Draw user prompt immediately on screen
+            with st.chat_message("user"):
+                st.markdown(prompt)
+                
+            # Draw assistant answer and fetch results
+            with st.chat_message("assistant"):
+                with st.spinner("Thinking..."):
+                    try:
+                        # Request answer through Strategy pattern façade
+                        answer = chatbot.ask(session_id, prompt)
+                        st.markdown(answer)
+                        
+                        # If RAG engine is active, render citations/source details
+                        if engine_type == "RAG Engine":
+                            sources = st.session_state.rag_engine.get_last_sources(session_id)
+                            if sources:
+                                with st.expander("🔍 View Retrieved Sources"):
+                                    for i, src in enumerate(sources):
+                                        st.markdown(f"""
+                                        <div class="source-card">
+                                            <div class="source-meta">Source {i+1}: {src['source']} (Page {src['page']})</div>
+                                            <div class="source-content">"{src['content'][:400]}..."</div>
+                                        </div>
+                                        """, unsafe_allow_html=True)
+                        # Trigger reload on success so messages settle nicely in the transcript
+                        st.rerun()
+                    except Exception as e:
+                        # Display error on screen (Rerun is skipped so error remains visible)
+                        st.error(f"Error generating answer: {e}")
+
+with tab2:
+    st.subheader("🗂️ Persistent Chroma DB Vector Store Explorer")
+    if st.session_state.vector_store is None:
+        st.info("Chroma DB is currently empty. Upload and ingest PDF documents in the sidebar to view them here.")
+    else:
+        try:
+            # Query the database
+            db_data = st.session_state.vector_store.get()
+            total_chunks = len(db_data.get("ids", []))
+            metadatas = db_data.get("metadatas", [])
+            documents = db_data.get("documents", [])
             
-    # 2. Render input block for new user queries
-    if prompt := st.chat_input("Ask a question about the uploaded PDFs..."):
-        # Draw user prompt immediately on screen
-        with st.chat_message("user"):
-            st.markdown(prompt)
+            # Find unique file sources
+            unique_sources = sorted(list(set(meta.get("source", "Unknown") for meta in metadatas if meta)))
             
-        # Draw assistant answer and fetch results
-        with st.chat_message("assistant"):
-            with st.spinner("Thinking..."):
-                try:
-                    # Request answer through Strategy pattern façade
-                    answer = chatbot.ask(session_id, prompt)
-                    st.markdown(answer)
-                    
-                    # If RAG engine is active, render citations/source details
-                    if engine_type == "RAG Engine":
-                        sources = st.session_state.rag_engine.get_last_sources(session_id)
-                        if sources:
-                            with st.expander("🔍 View Retrieved Sources"):
-                                for i, src in enumerate(sources):
-                                    st.markdown(f"""
-                                    <div class="source-card">
-                                        <div class="source-meta">Source {i+1}: {src['source']} (Page {src['page']})</div>
-                                        <div class="source-content">"{src['content'][:400]}..."</div>
-                                    </div>
-                                    """, unsafe_allow_html=True)
-                    # Trigger reload on success so messages settle nicely in the transcript
-                    st.rerun()
-                except Exception as e:
-                    # Display error on screen (Rerun is skipped so error remains visible)
-                    st.error(f"Error generating answer: {e}")
+            # Show high-level summary cards
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric("Total Ingested Files", len(unique_sources))
+            with col2:
+                st.metric("Total Vector Chunks", total_chunks)
+                
+            st.markdown("---")
+            
+            if unique_sources:
+                selected_file = st.selectbox("Select an Ingested PDF File to Browse:", unique_sources)
+                
+                # Filter chunks for the selected file
+                file_chunks = []
+                for doc, meta in zip(documents, metadatas):
+                    if meta and meta.get("source") == selected_file:
+                        # Default to page 0 if no page exists
+                        page_val = meta.get("page", 0)
+                        file_chunks.append((page_val, doc))
+                
+                # Sort chunks by page number
+                file_chunks.sort(key=lambda x: x[0])
+                
+                st.write(f"Showing **{len(file_chunks)}** chunks extracted from **{selected_file}**:")
+                
+                # Render each chunk in a neat expander
+                for idx, (page_num, chunk_text) in enumerate(file_chunks):
+                    # Handle page numbering formatting (display 1-indexed page)
+                    page_display = f"Page {page_num + 1}" if isinstance(page_num, int) else f"Page {page_num}"
+                    with st.expander(f"📄 {page_display} | Chunk {idx+1} | Size: {len(chunk_text)} chars"):
+                        st.text_area("Chunk Content", value=chunk_text, height=150, disabled=True, key=f"chunk_{selected_file}_{idx}_{page_num}")
+            else:
+                st.warning("No files found in the Chroma database collections.")
+        except Exception as e:
+            st.error(f"Error reading Chroma DB: {e}")

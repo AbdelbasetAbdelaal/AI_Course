@@ -181,10 +181,13 @@ class Chatbot:
         self.agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True)
 
     def response_generator(self, text):
-        """Creates a typewriter effect for chatbot responses."""
-        for word in text.split(" "):
+        """Creates a typewriter effect for chatbot responses, scaling speed for long text."""
+        words = text.split(" ")
+        # Scale delay dynamically so long replies do not cause a massive UI stall
+        delay = max(0.005, min(0.05, 5.0 / len(words))) if words else 0.05
+        for word in words:
             yield word + " "
-            time.sleep(0.05)
+            time.sleep(delay)
 
     def process_uploads(self, uploaded_files):
         """Parses uploaded file metadata and displays images in the sidebar."""
