@@ -60,8 +60,8 @@ with st.sidebar:
 # Initialize graph and checkpointer in session state
 if "checkpointer" not in st.session_state:
     st.session_state.checkpointer = MemorySaver()
-if "graph" not in st.session_state:
-    st.session_state.graph = build_graph().compile(checkpointer=st.session_state.checkpointer)
+# Always recompile the graph on rerun to ensure updates to agents.py are loaded instantly
+st.session_state.graph = build_graph().compile(checkpointer=st.session_state.checkpointer)
 
 config = {"configurable": {"thread_id": session_id}}
 
@@ -123,7 +123,17 @@ else:
                     for event in st.session_state.graph.stream(inputs, config, stream_mode="values"):
                         pass
                         
-                    # The state is updated, trigger a rerun to display the response
-                    st.rerun()
+                    # Retrieve the updated state and display the new assistant messages immediately
+                    current_state = st.session_state.graph.get_state(config)
+                    if current_state and current_state.values.get("messages"):
+                        old_len = len(st.session_state.chat_history)
+                        new_messages = current_state.values["messages"]
+                        st.session_state.chat_history = new_messages
+                        
+                        for msg in new_messages[old_len:]:
+                            if isinstance(msg, AIMessage) and msg.content:
+                                if "I need to verify your account" not in msg.content:
+                                    with st.chat_message("assistant"):
+                                        st.markdown(msg.content)
                 except Exception as e:
                     st.error(f"An error occurred: {e}")

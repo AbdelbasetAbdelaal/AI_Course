@@ -77,8 +77,23 @@ def get_songs_by_genre(genre: str) -> str:
 
 @tool
 def check_for_songs(song_title: str) -> str:
-    """Checks if a song exists by its name."""
-    query = "SELECT Track.Name, Artist.Name as ArtistName FROM Track JOIN Album ON Track.AlbumId = Album.AlbumId JOIN Artist ON Album.ArtistId = Artist.ArtistId WHERE Track.Name LIKE ? LIMIT 10"
+    """Checks if a song exists by its name and retrieves its details, including album, artist, composer, genre, duration, and price."""
+    query = """
+        SELECT 
+            Track.Name as TrackName, 
+            Artist.Name as ArtistName, 
+            Album.Title as AlbumTitle, 
+            Track.Composer, 
+            Genre.Name as GenreName, 
+            Track.Milliseconds, 
+            Track.UnitPrice 
+        FROM Track 
+        JOIN Album ON Track.AlbumId = Album.AlbumId 
+        JOIN Artist ON Album.ArtistId = Artist.ArtistId 
+        LEFT JOIN Genre ON Track.GenreId = Genre.GenreId
+        WHERE Track.Name LIKE ? 
+        LIMIT 10
+    """
     try:
         results = execute_query(query, (f"%{song_title}%",))
         if not results:
@@ -86,6 +101,7 @@ def check_for_songs(song_title: str) -> str:
         return json.dumps(results)
     except Exception as e:
         return f"Error: {e}"
+
 
 @tool
 def get_invoices_by_customer_sorted_by_date(customer_id: str) -> str:
