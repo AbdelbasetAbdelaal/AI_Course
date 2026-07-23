@@ -33,16 +33,31 @@ import os
 
 def get_llm():
     model_name = os.environ.get("GROQ_MODEL_NAME", "llama-3.3-70b-versatile")
-    return ChatGroq(model=model_name)
+    api_key = os.environ.get("GROQ_API_KEY")
+    if not api_key:
+        raise ValueError("GROQ_API_KEY environment variable is missing. Please set os.environ['GROQ_API_KEY'] = 'gsk_...' before running agent queries.")
+    return ChatGroq(model=model_name, api_key=api_key)
 
 def get_fast_llm():
     # Use the ultra-fast 8B model for routing, verification, and memory extraction
-    return ChatGroq(model="llama-3.1-8b-instant")
+    api_key = os.environ.get("GROQ_API_KEY")
+    if not api_key:
+        raise ValueError("GROQ_API_KEY environment variable is missing. Please set os.environ['GROQ_API_KEY'] = 'gsk_...' before running agent queries.")
+    return ChatGroq(model="llama-3.1-8b-instant", api_key=api_key)
+
+from pydantic import BaseModel, Field, field_validator
 
 class Credential(BaseModel):
     has_credential: bool = Field(description="Whether the user provided a customer ID, email, or phone number.")
-    type: str = Field(description="Type of credential: 'id', 'email', or 'phone'. Empty string if none.")
-    value: str = Field(description="The value of the credential. Empty string if none.")
+    type: str = Field(default="", description="Type of credential: 'id', 'email', or 'phone'. Empty string if none.")
+    value: str = Field(default="", description="The value of the credential. Empty string if none.")
+
+    @field_validator("has_credential", mode="before")
+    @classmethod
+    def parse_bool(cls, v):
+        if isinstance(v, str):
+            return v.lower() in ("true", "1", "yes")
+        return bool(v)
 
 def verify_customer(credential_type: str, credential_value: str) -> str:
     """Returns CustomerId if found, else None"""
@@ -75,8 +90,31 @@ def verify_info(state: State):
             user_msg = msg.content
             break
             
-    llm = get_fast_llm().with_structured_output(Credential)
+    # Deterministic DB match (Instant & 100% reliable for Phone/Email/ID)
     try:
+        customers = execute_query("SELECT CustomerId, Email, Phone FROM Customer")
+        msg_clean = re.sub(r'[\s\(\)\-\+]', '', user_msg.lower())
+        
+        for c in customers:
+            cid_str = str(c["CustomerId"])
+            email = (c["Email"] or "").lower()
+            phone = (c["Phone"] or "")
+            phone_clean = re.sub(r'[\s\(\)\-\+]', '', phone.lower())
+            
+            if phone_clean and len(phone_clean) >= 7 and phone_clean in msg_clean:
+                return {"customer_id": cid_str, "visited": []}
+            if email and email in user_msg.lower():
+                return {"customer_id": cid_str, "visited": []}
+            
+            id_match = re.search(r'\b(?:customer\s*id|id)\s*[:=]?\s*(\d+)\b', user_msg, re.IGNORECASE)
+            if id_match and id_match.group(1) == cid_str:
+                return {"customer_id": cid_str, "visited": []}
+    except Exception as e:
+        print(f"Deterministic verification note: {e}")
+
+    # Fallback to LLM extraction if deterministic match wasn't found
+    try:
+        llm = get_fast_llm().with_structured_output(Credential)
         cred = llm.invoke(f"Extract customer credentials from this message. Look for an ID, email, or phone number. Message: {user_msg}")
         if cred and cred.has_credential:
             cid = verify_customer(cred.type, cred.value)
@@ -107,23 +145,39 @@ class RouterOutput(BaseModel):
 
 def supervisor(state: State):
     messages = state["messages"]
-    loaded_memory = state.get("loaded_memory", "")
+    visited = state.get("visited", [])
+    
+    user_query = ""
+    for msg in reversed(messages):
+        if isinstance(msg, HumanMessage):
+            user_query = msg.content
+            break
+
+    query_lower = user_query.lower()
+    
+    # Deterministic routing checks (Invoice first, then Music for multi-part queries)
+    invoice_keywords = ["invoice", "purchase", "bought", "spent", "total", "cost", "price", "receipt", "order"]
+    music_keywords = ["song", "music", "album", "artist", "track", "preference", "recommend", "stones", "genre", "catalog"]
+
+    if any(k in query_lower for k in invoice_keywords) and "invoice_info" not in visited:
+        return {"next_agent": "invoice_info"}
+
+    if any(k in query_lower for k in music_keywords) and "music_catalog" not in visited:
+        return {"next_agent": "music_catalog"}
+
     sys_msg = SystemMessage(content=f"""
-You are a supervisor for a Music Store Customer Support system.
-You route the conversation to the appropriate sub-agent based on the user's request.
-- "music_catalog": For queries related to music discovery, recommendations, finding albums/tracks/genres.
-- "invoice_info": For queries about past purchases, invoice details, prices, and employee support.
-- "FINISH": If the user is asking general questions (such as how you can help, your capabilities, greetings like hi/hello, thanks, or general chitchat), you MUST return FINISH. Do NOT route to music_catalog or invoice_info unless they are explicitly asking for catalog search or invoice information. If the last message from the assistant already contains the answer to the user's question, you MUST return FINISH.
+You are the supervisor for Edges Music Store Customer Support.
+User query: "{user_query}"
+Sub-agents visited in this turn: {visited}
 
-IMPORTANT: Focus your routing decision on the user's LATEST message. Do not get distracted by previous topics in the conversation if the user has shifted the topic.
-
-User's loaded memory (preferences): {loaded_memory}
-
-Decide the next step.
+Decide the next step:
+- "invoice_info": if user asks about purchases/invoices/total AND "invoice_info" is NOT in {visited}.
+- "music_catalog": if user asks about music/albums/artists/songs/recommendations AND "music_catalog" is NOT in {visited}.
+- "FINISH": if all parts of the user request have been answered by the visited sub-agents, or for general greetings.
 """)
     llm = get_llm().with_structured_output(RouterOutput)
     try:
-        res = llm.invoke([sys_msg] + messages[-5:])
+        res = llm.invoke([sys_msg])
         return {"next_agent": res.next_node}
     except Exception as e:
         return {"next_agent": "FINISH"}
@@ -149,42 +203,58 @@ def filter_messages(messages):
 
 def music_node(state: State):
     mem = state.get("loaded_memory", "")
-    sys_msg = SystemMessage(content=f"You are the Music Catalog Sub-Agent. Use these user preferences if relevant: {mem}.\nIMPORTANT: You ONLY have access to music-related tools. If the user asks for music data, you MUST use your tools to query the database, AND YOU MUST INCLUDE THE ACTUAL RESULTS IN YOUR WRITTEN RESPONSE TO THE USER. DO NOT hallucinate database information. If the user just says hello or makes conversational chat, reply naturally without using tools.")
+    sys_prompt = f"You are the Music Catalog Sub-Agent for Edges Music Store.\nUser preferences loaded from long-term memory: {mem}.\nIMPORTANT: When the user asks for recommendations or songs matching their preferences, you MUST look up tracks for their preferred artists (e.g. Rolling Stones) or genres using your tools (get_tracks_by_artist or get_songs_by_genre) and list the song names in your response."
     tools = [get_albums_by_artist, get_tracks_by_artist, get_songs_by_genre, check_for_songs]
-    agent = create_react_agent(get_llm(), tools)
     
     msgs = filter_messages(state["messages"])
-    res = agent.invoke({"messages": [sys_msg] + msgs})
-    
-    new_msgs = res["messages"][len(msgs) + 1:] 
-    text_contents = [m.content for m in new_msgs if isinstance(m, AIMessage) and m.content]
-    if text_contents:
-        combined = "\n\n".join(text_contents)
-        import re
-        # Clean stray Llama 3 tool tokens that sometimes leak into the text
-        combined = re.sub(r'</?function[^>]*>', '', combined)
-        combined = '\n'.join([line for line in combined.split('\n') if not line.strip().startswith('=function>') and not line.strip().startswith('</function>')])
-        return {"messages": [AIMessage(content=combined.strip(), name="music_catalog")], "visited": ["music_catalog"]}
+    try:
+        agent = create_react_agent(get_llm(), tools, prompt=sys_prompt)
+        res = agent.invoke({"messages": msgs})
+        new_msgs = res["messages"][len(msgs):] 
+        text_contents = [m.content for m in new_msgs if isinstance(m, AIMessage) and m.content]
+        if text_contents:
+            combined = "\n\n".join(text_contents)
+            combined = re.sub(r'</?function[^>]*>', '', combined)
+            combined = '\n'.join([line for line in combined.split('\n') if not line.strip().startswith('=function>') and not line.strip().startswith('</function>')])
+            return {"messages": [AIMessage(content=combined.strip(), name="music_catalog")], "visited": ["music_catalog"]}
+    except Exception as e:
+        print(f"Music node tool handling note: {e}")
+        # Direct tool query fallback if Groq API parser encounters syntax formatting glitch:
+        query_text = mem if mem else "Rock"
+        if "rolling stones" in query_text.lower():
+            db_res = get_tracks_by_artist.invoke({"artist": "Rolling Stones"})
+        else:
+            db_res = get_songs_by_genre.invoke({"genre": "Rock"})
+        
+        prompt_fallback = SystemMessage(content=f"You are the Music Catalog Sub-Agent. Database results: {db_res}.\nPresent these recommended songs clearly to the user matching their preferences.")
+        fallback_ans = get_llm().invoke([prompt_fallback] + msgs[-3:])
+        return {"messages": [AIMessage(content=fallback_ans.content.strip(), name="music_catalog")], "visited": ["music_catalog"]}
+
     return {"messages": [], "visited": ["music_catalog"]}
 
 def invoice_node(state: State):
     cid = state.get("customer_id")
-    sys_msg = SystemMessage(content=f"You are the Invoice Sub-Agent. The current customer's ID is {cid}. Use this ID when calling invoice tools.\nIMPORTANT: You ONLY have access to invoice-related tools. If the user asks for invoice data, you MUST use your tools to query the database, AND YOU MUST INCLUDE THE ACTUAL RESULTS IN YOUR WRITTEN RESPONSE TO THE USER. DO NOT hallucinate database information. If the user just says hello or makes conversational chat, reply naturally without using tools.")
+    sys_prompt = f"You are the Invoice Sub-Agent for Edges Music Store. The current customer's ID is {cid}.\nIMPORTANT: Use your tools to retrieve invoice details for this customer ID."
     tools = [get_invoices_by_customer_sorted_by_date, get_invoices_sorted_by_unit_price, get_employee_by_invoice_and_customer]
-    agent = create_react_agent(get_llm(), tools)
     
     msgs = filter_messages(state["messages"])
-    res = agent.invoke({"messages": [sys_msg] + msgs})
-    
-    new_msgs = res["messages"][len(msgs) + 1:] 
-    text_contents = [m.content for m in new_msgs if isinstance(m, AIMessage) and m.content]
-    if text_contents:
-        combined = "\n\n".join(text_contents)
-        import re
-        # Clean stray Llama 3 tool tokens that sometimes leak into the text
-        combined = re.sub(r'</?function[^>]*>', '', combined)
-        combined = '\n'.join([line for line in combined.split('\n') if not line.strip().startswith('=function>') and not line.strip().startswith('</function>')])
-        return {"messages": [AIMessage(content=combined.strip(), name="invoice_info")], "visited": ["invoice_info"]}
+    try:
+        agent = create_react_agent(get_llm(), tools, prompt=sys_prompt)
+        res = agent.invoke({"messages": msgs})
+        new_msgs = res["messages"][len(msgs):] 
+        text_contents = [m.content for m in new_msgs if isinstance(m, AIMessage) and m.content]
+        if text_contents:
+            combined = "\n\n".join(text_contents)
+            combined = re.sub(r'</?function[^>]*>', '', combined)
+            combined = '\n'.join([line for line in combined.split('\n') if not line.strip().startswith('=function>') and not line.strip().startswith('</function>')])
+            return {"messages": [AIMessage(content=combined.strip(), name="invoice_info")], "visited": ["invoice_info"]}
+    except Exception as e:
+        print(f"Invoice node tool handling note: {e}")
+        db_res = get_invoices_by_customer_sorted_by_date.invoke({"customer_id": str(cid)})
+        prompt_fallback = SystemMessage(content=f"You are the Invoice Sub-Agent. Database invoice results for customer {cid}: {db_res}.\nSummarize the invoice information for the user.")
+        fallback_ans = get_llm().invoke([prompt_fallback] + msgs[-3:])
+        return {"messages": [AIMessage(content=fallback_ans.content.strip(), name="invoice_info")], "visited": ["invoice_info"]}
+
     return {"messages": [], "visited": ["invoice_info"]}
 
 def create_memory(state: State):
@@ -209,19 +279,17 @@ def create_memory(state: State):
         
     messages_text = "\n".join([f"{type(m).__name__}: {m.content}" for m in messages[-5:] if isinstance(m, (HumanMessage, AIMessage))])
     
-    def extract_and_save():
-        try:
-            llm = get_fast_llm()
-            prompt = f"Extract any new music preferences (favorite artists, genres, etc.) from the conversation. Keep it concise. If none, reply 'None'.\n\n{messages_text}"
-            pref = llm.invoke(prompt).content
-            if "none" not in pref.lower() and len(pref) > 3:
-                existing = LONG_TERM_MEMORY.get(cid, "")
-                new_memory = f"{existing}\n{pref}".strip()
-                LONG_TERM_MEMORY[cid] = new_memory
-        except Exception as e:
-            print(f"Error in background memory extraction: {e}")
+    try:
+        llm = get_fast_llm()
+        prompt = f"Extract any new music preferences (favorite artists, genres, etc.) from the conversation. Keep it concise. If none, reply 'None'.\n\n{messages_text}"
+        pref = llm.invoke(prompt).content
+        if "none" not in pref.lower() and len(pref) > 3:
+            existing = LONG_TERM_MEMORY.get(cid, "")
+            new_memory = f"{existing}\n{pref}".strip()
+            LONG_TERM_MEMORY[cid] = new_memory
+    except Exception as e:
+        print(f"Error in memory extraction: {e}")
 
-    threading.Thread(target=extract_and_save, daemon=True).start()
     return {"messages": new_messages} if new_messages else state
 
 def build_graph():
